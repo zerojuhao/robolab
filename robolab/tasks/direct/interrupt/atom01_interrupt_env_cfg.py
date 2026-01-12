@@ -16,7 +16,7 @@ from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from robolab.tasks.direct.base import mdp
-from robolab.assets.roboparty import ATOM01_CFG
+from robolab.assets.robots import ATOM01_CFG
 from robolab.tasks.direct.base import (  # noqa:F401
     BaseAgentCfg, 
     BaseEnvCfg, 

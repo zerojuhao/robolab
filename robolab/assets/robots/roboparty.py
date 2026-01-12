@@ -14,11 +14,11 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import DelayedPDActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
-from robolab.assets import ISAAC_ASSET_DIR
+from robolab.assets import ISAAC_DATA_DIR
 
 ATOM01_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        asset_path=f"{ISAAC_ASSET_DIR}/roboparty/atom01/urdf/atom01.urdf",
+        asset_path=f"{ISAAC_DATA_DIR}/robots/roboparty/atom01/urdf/atom01.urdf",
         fix_base=False,
         activate_contact_sensors=True,
         replace_cylinders_with_capsules=True,

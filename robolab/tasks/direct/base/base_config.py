@@ -31,8 +31,6 @@ from .scene_cfg import SceneCfg
 
 from . import mdp
 
-from robolab.assets.roboparty import ATOM01_CFG
-
 
 @configclass
 class RewardCfg:
@@ -55,8 +53,8 @@ class HeightScannerCfg:
 class SceneContextCfg:
     num_envs: int = 4096
     env_spacing: float = 2.5
-    robot: ArticulationCfg = ATOM01_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    terrain_type: str = "plane"
+    robot: ArticulationCfg = MISSING
+    terrain_type: str = MISSING
     terrain_generator: TerrainGeneratorCfg = None
     max_init_terrain_level: int = 5
     height_scanner: HeightScannerCfg = HeightScannerCfg()

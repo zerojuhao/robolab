@@ -9,4 +9,4 @@
 # This file contains code derived from Isaac Lab Project (BSD-3-Clause license)
 # with modifications by RoboLab Project (BSD-3-Clause license).
 
-from .atom01 import *
+from .roboparty import *
