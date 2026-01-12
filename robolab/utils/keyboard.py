@@ -20,7 +20,7 @@ import omni
 import torch
 from isaaclab.devices.device_base import DeviceBase
 
-from robolab.envs.base.base_env import BaseEnv
+from robolab.tasks.direct.base.base_env import BaseEnv
 
 
 class Keyboard(DeviceBase):
