@@ -15,10 +15,7 @@ class Atom01BeyondMimicEnvCfg(BeyondMimicEnvCfg):
         self.scene.robot = ATOM01_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.commands.motion.motion_file = f"{os.path.dirname(__file__)}/motion/yundong1.npz"
         # self.commands.motion.motion_file = f"{os.path.dirname(__file__)}/motion/G1_gangnam_style_V01.bvh_60hz.npz"
-        self.commands.motion.anchor_body_name = [
-            "torso_link",
-
-        ]
+        self.commands.motion.anchor_body_name = "torso_link"
         self.commands.motion.body_names = [
             'torso_link', 
             'left_thigh_roll_link', 

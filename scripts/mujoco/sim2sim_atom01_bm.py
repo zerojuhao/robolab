@@ -41,6 +41,9 @@ import matplotlib.pyplot as plt # Import matplotlib
 from pynput import keyboard
 from pathlib import Path
 import time
+from loop_rate_limiters import RateLimiter
+
+
 class cmd:
     vx = 0.0
     vy = 0.0
@@ -57,24 +60,6 @@ class cmd:
     max_dyaw = 1.5
     camera_follow = True
     reset_requested = False
-    
-    @classmethod
-    def update_vx(cls, delta):
-        """update forward velocity"""
-        cls.vx = np.clip(cls.vx + delta, cls.min_vx, cls.max_vx)
-        print(f"vx: {cls.vx:.2f}, vy: {cls.vy:.2f}, dyaw: {cls.dyaw:.2f}")
-    
-    @classmethod
-    def update_vy(cls, delta):
-        """update lateral velocity"""
-        cls.vy = np.clip(cls.vy + delta, cls.min_vy, cls.max_vy)
-        print(f"vx: {cls.vx:.2f}, vy: {cls.vy:.2f}, dyaw: {cls.dyaw:.2f}")
-    
-    @classmethod
-    def update_dyaw(cls, delta):
-        """update angular velocity"""
-        cls.dyaw = np.clip(cls.dyaw + delta, cls.min_dyaw, cls.max_dyaw)
-        print(f"vx: {cls.vx:.2f}, vy: {cls.vy:.2f}, dyaw: {cls.dyaw:.2f}")
 
     @classmethod
     def toggle_camera_follow(cls):
@@ -94,25 +79,7 @@ def on_press(key):
         # Number key controls: 8/5 control forward/backward (vx), 4/6 control left/right (vy), 7/9 control left/right turn (dyaw)
         if hasattr(key, 'char') and key.char is not None:
             c = key.char.lower()
-            if c == '8':
-                # 8 -> forward (increase vx)
-                cmd.update_vx(cmd.vx_increment)
-            elif c == '2':
-                # 2 -> backward (decrease vx)
-                cmd.update_vx(-cmd.vx_increment)
-            elif c == '4':
-                # 4 -> left (decrease vy)
-                cmd.update_vy(cmd.vy_increment)
-            elif c == '6':
-                # 6 -> right (increase vy)
-                cmd.update_vy(-cmd.vy_increment)
-            elif c == '7':
-                # 7 -> turn left (increase dyaw)
-                cmd.update_dyaw(cmd.dyaw_increment)
-            elif c == '9':
-                # 9 -> turn right (decrease dyaw)
-                cmd.update_dyaw(-cmd.dyaw_increment)
-            elif c == 'f':
+            if c == 'f':
                 # toggle camera follow
                 cmd.toggle_camera_follow()
             elif c == '0':
@@ -138,66 +105,12 @@ def get_obs(data):
     '''
     q = data.qpos.astype(np.double)
     dq = data.qvel.astype(np.double)
-    quat = data.sensor('orientation').data[[0, 1, 2, 3]].astype(np.double)
+    quat = data.sensor('orientation').data[[1, 2, 3, 0]].astype(np.double)
     r = R.from_quat(quat)
     v = r.apply(data.qvel[:3], inverse=True).astype(np.double)  # In the base frame
     omega = data.sensor('angular-velocity').data.astype(np.double)
     gvec = r.apply(np.array([0., 0., -1.]), inverse=True).astype(np.double)
     return (q, dq, quat, v, omega, gvec)
-
-def matrix_from_quat(quaternions: torch.Tensor) -> torch.Tensor:
-    """Convert rotations given as quaternions to rotation matrices."""
-    r, i, j, k = torch.unbind(quaternions, -1)
-    two_s = 2.0 / (quaternions * quaternions).sum(-1)
-
-    o = torch.stack(
-        (
-            1 - two_s * (j * j + k * k),
-            two_s * (i * j - k * r),
-            two_s * (i * k + j * r),
-            two_s * (i * j + k * r),
-            1 - two_s * (i * i + k * k),
-            two_s * (j * k - i * r),
-            two_s * (i * k - j * r),
-            two_s * (j * k + i * r),
-            1 - two_s * (i * i + j * j),
-        ),
-        -1,
-    )
-    return o.reshape(quaternions.shape[:-1] + (3, 3))
-
-def quat_mul_np(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    """Multiply two quaternions together."""
-    if q1.shape != q2.shape:
-        msg = f"Expected input quaternion shape mismatch: {q1.shape} != {q2.shape}."
-        raise ValueError(msg)
-    
-    shape = q1.shape
-    q1 = q1.reshape(-1, 4)
-    q2 = q2.reshape(-1, 4)
-    
-    w1, x1, y1, z1 = q1[:, 0], q1[:, 1], q1[:, 2], q1[:, 3]
-    w2, x2, y2, z2 = q2[:, 0], q2[:, 1], q2[:, 2], q2[:, 3]
-    
-    ww = (z1 + x1) * (x2 + y2)
-    yy = (w1 - y1) * (w2 + z2)
-    zz = (w1 + y1) * (w2 - z2)
-    xx = ww + yy + zz
-    qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
-    w = qq - ww + (z1 - y1) * (y2 - z2)
-    x = qq - xx + (x1 + w1) * (x2 + w2)
-    y = qq - yy + (w1 - x1) * (y2 + z2)
-    z = qq - zz + (z1 + y1) * (w2 - x2)
-
-    return np.stack([w, x, y, z], axis=-1).reshape(shape)
-
-def quat_inv_np(q: np.ndarray, eps: float = 1e-9) -> np.ndarray:
-    """Computes the inverse of a quaternion."""
-    shape = q.shape
-    q = q.reshape(-1, 4)
-    q_conj = np.concatenate((q[..., 0:1], -q[..., 1:]), axis=-1)
-    norm_sq = np.sum(q**2, axis=-1, keepdims=True)
-    return (q_conj / np.clip(norm_sq, a_min=eps, a_max=None)).reshape(shape)
 
 def pd_control(target_q, q, kp, target_dq, dq, kd):
     '''Calculates torques from position commands
@@ -242,11 +155,11 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
 
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
     model.opt.timestep = cfg.sim_config.dt
+    model.opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     data = mujoco.MjData(model)
     data.qpos[-cfg.robot_config.num_actions:] = cfg.robot_config.default_pos
-    # data.qpos[3:7] = [0.7071, 0.0, 0.0, 0.7071] 
-    # data.qpos[0:3] = motion_pos[0,0,:]
-    data.qpos[3:7] = motion_quat[0,0,:]
+    data.qpos[0:3] = motion_pos[0,0,:]
+    # data.qpos[3:7] = motion_quat[0,0,:]
     mujoco.mj_step(model, data)
 
     initial_qpos = data.qpos.copy()
@@ -284,6 +197,7 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
     hist_obs.fill(0.0)
 
     count_lowlevel = 0
+    control_freq = 1.0 / (cfg.sim_config.dt * cfg.sim_config.decimation)
 
     # --- Data collection lists for plotting (LOW FREQUENCY ONLY) ---
     time_data = []
@@ -298,6 +212,7 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
     actual_ang_vel_data = [] # Store [wz] at low freq
     # -------------------------------------------------------------
     is_first_frame = True
+    motion_t=0
     start_time = time.time()
     for step in tqdm(range(int(cfg.sim_config.sim_duration / cfg.sim_config.dt)), desc="Simulating..."):
         if cmd.reset_requested:
@@ -309,6 +224,7 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
             data.ctrl[:] = 0.0
             mujoco.mj_forward(model, data)
             cmd.reset_requested = False
+            motion_t = 0
         # Obtain an observation
         q, dq, quat, v, omega, gvec = get_obs(data)
         q = q[-cfg.robot_config.num_actions:]
@@ -316,16 +232,10 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
 
         # 1000hz -> 100hz/50hz
         if count_lowlevel % cfg.sim_config.decimation == 0:
-            idx=frame_idx(count_lowlevel)
+            idx=frame_idx(motion_t)
 
             m_input=np.concatenate((m_input_pos[idx,:],m_input_vel[idx,:]),axis=0)
-            m_anchor_quat=motion_quat[idx,0,:] # 2 is for torso_link
-            if m_anchor_quat is not None:
-                q12=quat_mul_np(quat_inv_np(quat),m_anchor_quat)
-            else:
-                q12=quat_inv_np(quat)
-            q_mat=matrix_from_quat(torch.from_numpy(q12))
-            motion_ref_ori_b=q_mat[...,:2].reshape(6)
+            
             q_ = q - cfg.robot_config.default_pos
 
             q_obs = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
@@ -337,12 +247,12 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
             obs = np.zeros([1, cfg.robot_config.num_single_obs], dtype=np.float32)
             
             obs[0, 0:46] = m_input
-            obs[0, 46:52] = motion_ref_ori_b
-            obs[0, 52:55] = omega
-            obs[0, 55:78] = q_obs
-            obs[0, 78:101] = dq_obs
-            obs[0, 101:124] = action
-            time.sleep(0.05)
+            obs[0, 46:49] = gvec
+            obs[0, 49:52] = omega
+            obs[0, 52:75] = q_obs
+            obs[0, 75:98] = dq_obs
+            obs[0, 98:121] = action
+            # time.sleep(0.05)
             # print("current command: lin vel x={:.2f}, lin vel y={:.2f}, ang vel z={:.2f}".format(cmd.vx, cmd.vy, cmd.dyaw))  
             # print("current velocity: lin vel x={:.2f}, lin vel y={:.2f}, ang vel z={:.2f}".format(v[0], v[1], omega[2]))
 
@@ -363,23 +273,23 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
 
             # --- Capture actual state at this low-frequency step ---
             # Note: q, v, omega were just computed by get_obs() for the current simulation step
-            q_low_freq = q.copy()
-            v_low_freq = v[:2].copy() # Capture x and y linear velocity
-            omega_low_freq = omega[2].copy() # Capture z angular velocity
+            # q_low_freq = q.copy()
+            # v_low_freq = v[:2].copy() # Capture x and y linear velocity
+            # omega_low_freq = omega[2].copy() # Capture z angular velocity
             # -----------------------------------------------------
 
             # --- Collect low-frequency data for plotting ---
             # Use the exact simulation time at this low-freq step
-            time_data.append(step * cfg.sim_config.dt)
-            commanded_joint_pos_data.append(target_pos.copy())
-            actual_joint_pos_data.append(q_low_freq) # Use the captured actual joint pos
-            tau_data.append(tau.copy())
-            commanded_lin_vel_x_data.append(cmd.vx)
-            commanded_lin_vel_y_data.append(cmd.vy)
-            commanded_ang_vel_z_data.append(cmd.dyaw)
-            actual_lin_vel_data.append(v_low_freq) # Use the captured actual lin vel
-            actual_ang_vel_data.append(omega_low_freq) # Use the captured actual ang vel
-            # ----------------------------------------------
+            # time_data.append(step * cfg.sim_config.dt)
+            # commanded_joint_pos_data.append(target_pos.copy())
+            # actual_joint_pos_data.append(q_low_freq) # Use the captured actual joint pos
+            # tau_data.append(tau.copy())
+            # commanded_lin_vel_x_data.append(cmd.vx)
+            # commanded_lin_vel_y_data.append(cmd.vy)
+            # commanded_ang_vel_z_data.append(cmd.dyaw)
+            # actual_lin_vel_data.append(v_low_freq) # Use the captured actual lin vel
+            # actual_ang_vel_data.append(omega_low_freq) # Use the captured actual ang vel
+            # # ----------------------------------------------
 
             if headless:
                 renderer.update_scene(data, camera=cam)
@@ -393,6 +303,10 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
                     base_pos = data.qpos[0:3].tolist()
                     viewer.cam.lookat = [float(base_pos[0]), float(base_pos[1]), float(base_pos[2])]
                 viewer.render()
+
+            motion_t+=1
+            rate_limiter = RateLimiter(frequency=control_freq, warn=False)
+            rate_limiter.sleep()
             
         target_vel = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
         # Generate PD control
@@ -401,12 +315,6 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
         tau = np.clip(tau, -cfg.robot_config.tau_limit, cfg.robot_config.tau_limit)  # Clamp torques
         data.ctrl = tau
         mujoco.mj_step(model, data)
-
-        elapsed_real_time = time.time() - start_time
-        target_sim_time = (step + 1) * cfg.sim_config.dt
-        if elapsed_real_time < target_sim_time:
-            time.sleep(target_sim_time - elapsed_real_time)
-
         count_lowlevel += 1
 
     if headless:
@@ -418,86 +326,6 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
 
     print("Simulation finished. Generating plots...")
 
-    # Convert collected data to numpy arrays
-    time_data = np.array(time_data)
-    commanded_joint_pos_data = np.array(commanded_joint_pos_data)
-    actual_joint_pos_data = np.array(actual_joint_pos_data)
-    tau_data = np.array(tau_data)
-    commanded_lin_vel_x_data = np.array(commanded_lin_vel_x_data)
-    commanded_lin_vel_y_data = np.array(commanded_lin_vel_y_data)
-    commanded_ang_vel_z_data = np.array(commanded_ang_vel_z_data)
-    actual_lin_vel_data = np.array(actual_lin_vel_data)
-    actual_ang_vel_data = np.array(actual_ang_vel_data)
-
-
-    # Plot 1: Commanded vs Actual Joint Positions
-    num_joints = cfg.robot_config.num_actions
-    n_cols = 4 # Or adjust based on num_joints
-    n_rows = (num_joints + n_cols - 1) // n_cols
-
-    fig1, axes1 = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows), sharex=True)
-    axes1 = axes1.flatten()
-
-    joint_names = [f'Joint {i+1}' for i in range(num_joints)] # Generic names (consider using specific robot joint names if available)
-
-    for i in range(num_joints):
-        ax = axes1[i]
-        # Plotting low-frequency commanded and actual joint positions
-        ax.plot(time_data, commanded_joint_pos_data[:, i], label='Commanded', linestyle='--')
-        ax.plot(time_data, actual_joint_pos_data[:, i], label='Actual')
-        ax.set_title(joint_names[i])
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("Position [rad]")
-        ax.legend()
-        ax.grid(True)
-
-    # Hide any unused subplots
-    for i in range(num_joints, len(axes1)):
-        fig1.delaxes(axes1[i])
-
-    fig1.suptitle("Commanded vs Actual Joint Positions", fontsize=16)
-    plt.tight_layout()
-
-
-    # Plot 2: Commanded vs Actual Base Velocities
-    fig2, axes2 = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
-
-    # Linear Velocity X
-    # Plotting low-frequency commanded and actual velocities
-    axes2[0].plot(time_data, commanded_lin_vel_x_data, label='Commanded Vx', linestyle='--')
-    axes2[0].plot(time_data, actual_lin_vel_data[:, 0], label='Actual Vx')
-    axes2[0].set_title("Base Linear Velocity X")
-    axes2[0].set_xlabel("Time [s]")
-    axes2[0].set_ylabel("Velocity [m/s]")
-    axes2[0].legend()
-    axes2[0].grid(True)
-
-    # Linear Velocity Y
-    axes2[1].plot(time_data, commanded_lin_vel_y_data, label='Commanded Vy', linestyle='--')
-    axes2[1].plot(time_data, actual_lin_vel_data[:, 1], label='Actual Vy')
-    axes2[1].set_title("Base Linear Velocity Y")
-    axes2[1].set_xlabel("Time [s]")
-    axes2[1].set_ylabel("Velocity [m/s]")
-    axes2[1].legend()
-    axes2[1].grid(True)
-
-    # Angular Velocity Z
-    axes2[2].plot(time_data, commanded_ang_vel_z_data, label='Commanded Dyaw', linestyle='--')
-    axes2[2].plot(time_data, actual_ang_vel_data, label='Actual Dyaw') # actual_ang_vel_data is already 1D
-    axes2[2].set_title("Base Angular Velocity Z (Dyaw)")
-    axes2[2].set_xlabel("Time [s]")
-    axes2[2].set_ylabel("Angular Velocity [rad/s]")
-    axes2[2].legend()
-    axes2[2].grid(True)
-
-    fig2.suptitle("Commanded vs Actual Base Velocities", fontsize=16)
-    plt.tight_layout()
-
-    # plt.show()
-    fig1.savefig("joint_positions.png")
-    fig2.savefig("base_velocities.png")
-
-    print("Plots finished.")
     # --- End Plotting Section ---
 
     
@@ -531,7 +359,7 @@ if __name__ == '__main__':
             default_pos = np.array([0, 0, -0.1, 0.3, -0.2, 0, 0, 0, -0.1, 0.3, -0.2, 0, 0, 0.18, 0.06, 0, 0.78, 0, 0.18, -0.06, 0, 0.78, 0], dtype=np.double)
             tau_limit = 200. * np.ones(23, dtype=np.double)
             frame_stack = 1
-            num_single_obs = 124
+            num_single_obs = 121
             num_observations = num_single_obs * frame_stack
             num_actions = 23
             action_scale = 0.25
