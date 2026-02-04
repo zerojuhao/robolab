@@ -225,8 +225,8 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
             obs = np.zeros([1, cfg.robot_config.num_single_obs], dtype=np.float32)
             
             obs[0, 0:46] = m_input
-            obs[0, 46:49] = gvec
-            obs[0, 49:52] = omega
+            obs[0, 46:49] = omega
+            obs[0, 49:52] = gvec
             obs[0, 52:75] = q_obs
             obs[0, 75:98] = dq_obs
             obs[0, 98:121] = action
