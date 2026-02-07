@@ -1,6 +1,7 @@
 *.egg-info
 *.pyc
-.vscode
+.vscode/*
+!.vscode/tools/
 outputs
 logs
 run_bash.sh
