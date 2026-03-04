@@ -64,10 +64,8 @@ from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
 from robolab.assets import ISAAC_DATA_DIR
 import torch
-import os
 import cv2
 from pynput import keyboard
-import time
 from loop_rate_limiters import RateLimiter
 
 
@@ -153,15 +151,12 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
     data = mujoco.MjData(model)
     data.qpos[-cfg.robot_config.num_actions:] = cfg.robot_config.default_pos
     data.qpos[0:3] = motion_pos[0,0,:]
-    # data.qpos[3:7] = motion_quat[0,0,:]
+    data.qpos[3:7] = motion_quat[0,0,:]
     mujoco.mj_step(model, data)
 
     initial_qpos = data.qpos.copy()
     initial_qvel = data.qvel.copy()
 
-    
-    os.environ['__GLX_VENDOR_LIBRARY_NAME'] = 'nvidia'
-    os.environ['MUJOCO_GL'] = 'glfw'
     if headless:
         renderer = mujoco.Renderer(model, width=1920, height=1080)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')

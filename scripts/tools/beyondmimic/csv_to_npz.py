@@ -47,8 +47,10 @@ from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Replay motion from csv file and output to npz file.")
-parser.add_argument("--input_file", "-f", type=str, required=True, help="The path to the input motion csv file.")
-parser.add_argument("--input_fps", type=int, default=60, help="The fps of the input motion.")
+parser.add_argument("--input_file", "-f", type=str, 
+                    default="robolab/data/motions/atom01_bm/getup.csv", 
+                    help="The path to the input motion csv file.")
+parser.add_argument("--input_fps", type=int, default=30, help="The fps of the input motion.")
 parser.add_argument(
     "--frame_range",
     nargs=2,

@@ -45,13 +45,13 @@ from .animation_manager_cfg import AnimationTermCfg
 from .motion_data_manager import MotionDataTerm
 
 if TYPE_CHECKING:
-    from robolab.tasks.manager_based.amp.manager_based_animation_env import ManagerBasedAnimationEnv
+    from robolab.tasks.manager_based.amp.animation_env import AnimationEnv
 
 class AnimationTerm(ManagerTermBase):
     cfg: AnimationTermCfg
-    _env: ManagerBasedAnimationEnv
+    _env: AnimationEnv
     
-    def __init__(self, cfg: AnimationTermCfg, env: ManagerBasedAnimationEnv):
+    def __init__(self, cfg: AnimationTermCfg, env: AnimationEnv):
         super().__init__(cfg, env)
         
         if cfg.num_steps_to_use > 0:
@@ -265,7 +265,7 @@ class AnimationTerm(ManagerTermBase):
             
 class AnimationManager(ManagerBase):
     
-    def __init__(self, cfg: object, env: ManagerBasedAnimationEnv):
+    def __init__(self, cfg: object, env: AnimationEnv):
         if cfg is None:
             raise ValueError("AnimationManager configuration is required.")
         

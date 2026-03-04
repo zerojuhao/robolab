@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import torch
 from typing import TYPE_CHECKING
-
+from dataclasses import MISSING
 import isaaclab.utils.math as math_utils
 import isaaclab.utils.string as string_utils
 from isaaclab.assets import Articulation, RigidObject
@@ -42,7 +42,7 @@ from isaaclab.sensors import FrameTransformer, RayCaster
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
-    from robolab.tasks.manager_based.amp.manager_based_animation_env import ManagerBasedAnimationEnv
+    from robolab.tasks.manager_based.amp.animation_env import AnimationEnv
     from robolab.tasks.manager_based.amp.managers import AnimationTerm
     
 
@@ -67,7 +67,7 @@ def root_local_rot_tan_norm(
 
 
 def ref_root_local_rot_tan_norm(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -92,7 +92,7 @@ def ref_root_local_rot_tan_norm(
         return obs
 
 def ref_root_projected_gravity(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str,
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -138,30 +138,30 @@ def root_rot_tan_norm(
     return obs
 
 
-# def key_body_pos_b(
-#     env: ManagerBasedEnv,
-#     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=MISSING, preserve_order=True),
-# ) -> torch.Tensor:
+def key_body_pos_b(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=MISSING, preserve_order=True),
+) -> torch.Tensor:
 
-#     robot: Articulation = env.scene[asset_cfg.name]
+    robot: Articulation = env.scene[asset_cfg.name]
     
-#     key_body_pos_w = robot.data.body_pos_w[:, asset_cfg.body_ids, :]  # shape: (num_envs, M, 3)
-#     root_pos_w = robot.data.root_pos_w      # shape: (num_envs, 3).
-#     root_quat = robot.data.root_quat_w    # shape: (num_envs, 4), w, x, y, z order.
+    key_body_pos_w = robot.data.body_pos_w[:, asset_cfg.body_ids, :]  # shape: (num_envs, M, 3)
+    root_pos_w = robot.data.root_pos_w      # shape: (num_envs, 3).
+    root_quat = robot.data.root_quat_w    # shape: (num_envs, 4), w, x, y, z order.
     
-#     num_key_bodies = key_body_pos_w.shape[1]
-#     num_envs = root_pos_w.shape[0]
+    num_key_bodies = key_body_pos_w.shape[1]
+    num_envs = root_pos_w.shape[0]
     
-#     key_body_pos_b = math_utils.quat_apply_inverse(
-#         root_quat.unsqueeze(1).expand(-1, num_key_bodies, -1), 
-#         key_body_pos_w - root_pos_w.unsqueeze(1).expand(-1, num_key_bodies, -1)
-#     )
+    key_body_pos_b = math_utils.quat_apply_inverse(
+        root_quat.unsqueeze(1).expand(-1, num_key_bodies, -1), 
+        key_body_pos_w - root_pos_w.unsqueeze(1).expand(-1, num_key_bodies, -1)
+    )
     
-#     return key_body_pos_b.reshape(num_envs, -1)
+    return key_body_pos_b.reshape(num_envs, -1)
 
 
 def ref_root_pos_error(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     abs_height: bool = True
@@ -207,7 +207,7 @@ def ref_root_pos_error(
 
 
 def ref_root_rot_tan_norm(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str,
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -227,7 +227,7 @@ def ref_root_rot_tan_norm(
 
 
 def ref_root_ang_vel_b(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -248,7 +248,7 @@ def ref_root_ang_vel_b(
     
 
 def ref_root_lin_vel_b(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -269,7 +269,7 @@ def ref_root_lin_vel_b(
 
 
 def ref_joint_pos(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -284,7 +284,7 @@ def ref_joint_pos(
         return ref_dof_pos
     
 def ref_joint_vel(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:
@@ -299,7 +299,7 @@ def ref_joint_vel(
         return ref_dof_vel
 
 def ref_key_body_pos_b(
-    env: ManagerBasedAnimationEnv, 
+    env: AnimationEnv, 
     animation: str, 
     flatten_steps_dim: bool = True,
 ) -> torch.Tensor:

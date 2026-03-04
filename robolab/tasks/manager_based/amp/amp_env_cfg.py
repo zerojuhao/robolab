@@ -58,6 +58,7 @@ import robolab.tasks.manager_based.amp.mdp as mdp
 from .animation_env_cfg import AnimationEnvCfg
 from robolab.tasks.manager_based.amp.managers import AnimationTermCfg as AnimTerm
 from robolab.tasks.manager_based.amp.managers import MotionDataTermCfg as MotionDataTerm
+ANIMATION_TERM_NAME = "animation"
 
 @configclass
 class AmpSceneCfg(InteractiveSceneCfg):
@@ -183,8 +184,8 @@ class ObservationsCfg():
     
     @configclass
     class DiscriminatorCfg(ObsGroup):
-        root_local_rot_tan_norm = ObsTerm(func=mdp.root_local_rot_tan_norm)
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        # root_local_rot_tan_norm = ObsTerm(func=mdp.root_local_rot_tan_norm)
+        # base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
@@ -204,38 +205,38 @@ class ObservationsCfg():
             
     @configclass
     class DiscriminatorDemoCfg(ObsGroup):
-        ref_root_local_rot_tan_norm = ObsTerm(
-            func=mdp.ref_root_local_rot_tan_norm,
-            params={
-                "animation": MISSING,
-                "flatten_steps_dim": False,
-            }
-        )
-        ref_root_lin_vel_b = ObsTerm(
-            func=mdp.ref_root_lin_vel_b,
-            params={
-                "animation": MISSING,
-                "flatten_steps_dim": False,
-            }
-        )
+        # ref_root_local_rot_tan_norm = ObsTerm(
+        #     func=mdp.ref_root_local_rot_tan_norm,
+        #     params={
+        #         "animation": ANIMATION_TERM_NAME,
+        #         "flatten_steps_dim": False,
+        #     }
+        # )
+        # ref_root_lin_vel_b = ObsTerm(
+        #     func=mdp.ref_root_lin_vel_b,
+        #     params={
+        #         "animation": ANIMATION_TERM_NAME,
+        #         "flatten_steps_dim": False,
+        #     }
+        # )
         ref_root_ang_vel_b = ObsTerm(
             func=mdp.ref_root_ang_vel_b,
             params={
-                "animation": MISSING,
+                "animation": ANIMATION_TERM_NAME,
                 "flatten_steps_dim": False,
             }
         )
         ref_joint_pos = ObsTerm(
             func=mdp.ref_joint_pos,
             params={
-                "animation": MISSING,
+                "animation": ANIMATION_TERM_NAME,
                 "flatten_steps_dim": False,
             }
         )
         ref_joint_vel = ObsTerm(
             func=mdp.ref_joint_vel,
             params={
-                "animation": MISSING,
+                "animation": ANIMATION_TERM_NAME,
                 "flatten_steps_dim": False,
             }
         )
@@ -314,7 +315,6 @@ class EventCfg:
         },
     )
 
-    
     scale_joint_parameters = EventTerm(
         func=mdp.randomize_joint_parameters,
         mode="startup",
@@ -326,7 +326,6 @@ class EventCfg:
         },
     )
     
-    # reset
     base_external_force_torque = EventTerm(
         func=mdp.apply_external_force_torque,
         mode="reset",
@@ -337,14 +336,7 @@ class EventCfg:
         },
     )
 
-    # reset_from_ref = EventTerm(
-    #     func=mdp.reset_from_ref, 
-    #     mode="reset",
-    #     params=MISSING
-    # )
-
-    # # interval
-
+    # reset
     reset_base=EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
@@ -373,7 +365,7 @@ class EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(10.0, 20.0),
+        interval_range_s=(5.0, 10.0),
         params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)}},
     )
     

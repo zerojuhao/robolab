@@ -29,11 +29,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import math
 import numpy as np
 import mujoco, mujoco_viewer
 from tqdm import tqdm
-from collections import deque
 from scipy.spatial.transform import Rotation as R
 from robolab.assets import ISAAC_DATA_DIR
 import torch

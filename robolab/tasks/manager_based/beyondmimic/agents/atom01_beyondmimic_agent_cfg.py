@@ -69,10 +69,4 @@ class Atom01BeyondMimicPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         max_grad_norm=1.0,
         normalize_advantage_per_mini_batch=False,
         symmetry_cfg=None
-        # symmetry_cfg=RslRlSymmetryCfg(
-        #     use_data_augmentation=True, 
-        #     use_mirror_loss=True,
-        #     mirror_loss_coeff=0.1, 
-        #     data_augmentation_func=data_augmentation_func
-        # ),
     )

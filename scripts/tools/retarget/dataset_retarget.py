@@ -68,19 +68,19 @@ parser.add_argument(
 parser.add_argument(
     "--input_dir",
     type=str,
-    default="source/legged_lab/legged_lab/data/MotionData/atom01_gmr",
+    default="robolab/data/motions/atom01_gmr",
     help="Directory containing input GMR .pkl files",
 )
 parser.add_argument(
     "--output_dir",
     type=str,
-    default="source/legged_lab/legged_lab/data/MotionData/atom01_lab",
+    default="robolab/data/motions/atom01_lab",
     help="Directory to write converted .pkl files",
 )
 parser.add_argument(
     "--config_file",
     type=str,
-    default="scripts/tools/retarget/config/atom01.yaml",
+    default="robolab/scripts/tools/retarget/config/atom01.yaml",
     help="Path to YAML config containing gmr_dof_names, lab_dof_names, lab_key_body_names",
 )
 parser.add_argument(
@@ -108,7 +108,7 @@ from isaaclab.scene import InteractiveScene
 
 # load robot cfg as single_retarget does
 if args_cli.robot == "atom01":
-    from legged_lab.assets.roboparty import ATOM01_CFG as ROBOT_CFG
+    from robolab.assets.robots.roboparty import ATOM01_CFG as ROBOT_CFG
 else:
     raise ValueError(f"Robot {args_cli.robot} not supported.")
 

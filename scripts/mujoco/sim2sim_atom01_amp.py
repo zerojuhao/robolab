@@ -29,18 +29,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# import math
 import numpy as np
 import mujoco, mujoco_viewer
 from tqdm import tqdm
-from collections import deque
 from scipy.spatial.transform import Rotation as R
 import torch
-import os
 import cv2
 import matplotlib.pyplot as plt
 from pynput import keyboard
-from pathlib import Path
 import time
 from robolab.assets import ISAAC_DATA_DIR
 
@@ -190,9 +186,6 @@ def run_mujoco(policy, cfg, headless=False):
 
     
     if headless:
-        os.environ['__GLX_VENDOR_LIBRARY_NAME'] = 'nvidia'
-        os.environ['MUJOCO_GL'] = 'glfw'
-
         renderer = mujoco.Renderer(model, width=1920, height=1080)
         
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -442,7 +435,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deployment script.')
     parser.add_argument('--load_model', 
                         # type=str, 
-                        default="/home/zyq/atom01/atom01_train_dev/logs/rsl_rl/atom01_amp/2026-01-11_20-11-49/exported/policy.pt",
+                        default="/home/msi/桌面/atom01_train/logs/rsl_rl/atom01_amp/2026-03-03_11-44-01/exported/policy.pt",
                         help='Run to load from.')
     parser.add_argument('--terrain', action='store_true', default='plane', help='terrain or plane')
     parser.add_argument('--headless', action='store_true', help='Run without GUI and save video')

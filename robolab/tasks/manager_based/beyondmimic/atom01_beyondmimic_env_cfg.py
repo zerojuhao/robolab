@@ -75,7 +75,4 @@ class Atom01BeyondMimicEnvCfg(BeyondMimicEnvCfg):
             'right_elbow_yaw_link',
         ]
 
-        self.observations.policy.motion_anchor_pos_b = None
-        self.observations.policy.base_lin_vel = None
-
         self.episode_length_s = 20.0
