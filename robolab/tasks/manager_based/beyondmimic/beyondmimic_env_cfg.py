@@ -67,6 +67,14 @@ VELOCITY_RANGE = {
     "pitch": (-0.52, 0.52),
     "yaw": (-0.78, 0.78),
 }
+POSE_RANGE = {
+    "x": (-0.05, 0.05),
+    "y": (-0.05, 0.05),
+    "z": (-0.01, 0.01),
+    "roll": (-0.1, 0.1),
+    "pitch": (-0.1, 0.1),
+    "yaw": (-0.2, 0.2),
+}
 
 
 @configclass
@@ -118,14 +126,7 @@ class CommandsCfg:
         asset_name="robot",
         resampling_time_range=(1.0e9, 1.0e9),
         debug_vis=True,
-        pose_range={
-            "x": (-0.05, 0.05),
-            "y": (-0.05, 0.05),
-            "z": (-0.01, 0.01),
-            "roll": (-0.1, 0.1),
-            "pitch": (-0.1, 0.1),
-            "yaw": (-0.2, 0.2),
-        },
+        pose_range=POSE_RANGE,
         velocity_range=VELOCITY_RANGE,
         joint_position_range=(-0.1, 0.1),
     )

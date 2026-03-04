@@ -38,6 +38,16 @@ from robolab.tasks.manager_based.beyondmimic.beyondmimic_env_cfg import BeyondMi
 from isaaclab.utils import configclass
 from robolab import ROBOLAB_ROOT_DIR
 
+s_body_name=[
+    'left_thigh_yaw_link', 
+    'right_thigh_yaw_link', 
+    'left_knee_link', 
+    'right_knee_link', 
+    'left_elbow_yaw_link', 
+    'right_elbow_yaw_link',
+    'left_ankle_pitch_link', 
+    'right_ankle_pitch_link',
+]
 
 @configclass
 class Atom01BeyondMimicEnvCfg(BeyondMimicEnvCfg):
