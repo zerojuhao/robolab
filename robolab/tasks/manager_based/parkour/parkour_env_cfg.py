@@ -532,6 +532,16 @@ class ParkourRewardsCfg:
             )
         },
     )
+    joint_deviation_upper_elbow = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-10.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_elbow_yaw_joint"],
+            )
+        },
+    )
     # freeze_upper_body = RewTerm(
     #     func=mdp.joint_deviation_l1,
     #     weight=-0.004,
