@@ -167,29 +167,6 @@ def close_interactive_viewer(viewer: Any, use_passive: bool, passive_ctx: Any) -
         viewer.close()
 
 
-def warn_interactive_gui_environment() -> None:
-    """Typical causes: missing DISPLAY, or MUJOCO_GL set to an offscreen backend so GLFW shows no window."""
-    if sys.platform == "darwin":
-        print(
-            "[HINT] macOS: MuJoCo's official Python viewer often requires "
-            "`mjpython sim2sim_atom01_parkour.py ...` (see MuJoCo docs)."
-        )
-    if sys.platform == "linux":
-        display = os.environ.get("DISPLAY")
-        if not display:
-            print(
-                "[WARN] DISPLAY is not set; the MuJoCo GUI will usually not open.\n"
-                "       Run from a graphical desktop terminal, e.g. export DISPLAY=:0\n"
-                "       For SSH use X11 forwarding: ssh -X ... or a local terminal."
-            )
-    gl = os.environ.get("MUJOCO_GL", "").strip().lower()
-    if gl in ("egl", "osmesa"):
-        print(
-            f"[WARN] MUJOCO_GL={os.environ.get('MUJOCO_GL')!r} is often used for offscreen/headless "
-            "rendering and may block an interactive window.\n"
-            "       Try: unset MUJOCO_GL  or  export MUJOCO_GL=glfw  then rerun."
-        )
-
 
 class CameraMode:
     ORBIT = "orbit"
@@ -766,8 +743,6 @@ def run_mujoco_onnx(
     )
     if headless:
         show_depth_vis = False
-    if not headless:
-        warn_interactive_gui_environment()
     keyboard_listener = start_keyboard_listener()
     print_controls_guide()
 

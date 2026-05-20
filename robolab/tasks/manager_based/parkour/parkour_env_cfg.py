@@ -832,10 +832,10 @@ class EventCfg:
         params={
             "asset_cfg": SceneEntityCfg("camera"),
             "offset_pose_ranges": {
-                "x": (-0.03, 0.03),  # 位置扰动范围（米）
+                "x": (-0.03, 0.03),
                 "y": (-0.03, 0.03),
                 "z": (-0.03, 0.03),
-                "roll": (-math.radians(3), math.radians(3)),  # 旋转扰动（弧度）
+                "roll": (-math.radians(3), math.radians(3)),
                 "pitch": (-math.radians(3), math.radians(3)),
                 "yaw": (-math.radians(3), math.radians(3)),
             },
@@ -847,9 +847,9 @@ class EventCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    # terrain_levels = CurrTerm(
-    #     func=mdp.tracking_exp_vel, params={"lin_vel_threshold": (0.5, 0.8), "ang_vel_threshold": (0.0, 0.0)}
-    # )
+    terrain_levels = CurrTerm(
+        func=mdp.tracking_exp_vel, params={"lin_vel_threshold": (0.5, 0.8), "ang_vel_threshold": (0.0, 0.0)}
+    )
     volume_points_penetration_weight_feet = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
