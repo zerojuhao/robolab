@@ -1083,7 +1083,7 @@ def run_mujoco_onnx(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Atom01 parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
-        "/home/amdin/zym/instinct_train/logs/rsl_rl/atom01_parkour/2026-05-19_16-48-03/exported"
+        "/home/amdin/zym/instinct_train/logs/rsl_rl/atom01_parkour/2026-05-20_11-22-41/exported"
     )
     parser.add_argument(
         "--depth_encoder",
