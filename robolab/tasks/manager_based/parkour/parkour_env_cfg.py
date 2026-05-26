@@ -608,7 +608,7 @@ class ParkourRewardsCfg:
     )
     sound_suppression = RewTerm(
         func=mdp.sound_suppression_acc_per_foot,
-        weight=-5e-3,
+        weight=-5e-4,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",

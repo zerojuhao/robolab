@@ -147,7 +147,10 @@ torch.backends.cudnn.benchmark = False
 
 
 def get_resume_checkpoint_path(log_path: str, run_dir: str, checkpoint: str) -> str:
-    """Find the latest checkpoint, skipping empty run directories."""
+    """Find the latest checkpoint, skipping empty run directories.
+
+    Runs are ordered by last-modified time (newest first), matching Isaac Lab ``get_checkpoint_path(sort_alpha=False)``.
+    """
     runs = [
         os.path.join(log_path, run.name)
         for run in os.scandir(log_path)
@@ -155,7 +158,7 @@ def get_resume_checkpoint_path(log_path: str, run_dir: str, checkpoint: str) -> 
     ]
     if not runs:
         raise ValueError(f"No runs present in the directory: '{log_path}' match: '{run_dir}'.")
-    runs.sort()
+    runs = sorted(runs, key=os.path.getmtime)
     for run_path in reversed(runs):
         model_checkpoints = [f for f in os.listdir(run_path) if re.match(checkpoint, f)]
         if model_checkpoints:
@@ -181,6 +184,17 @@ def _broadcast_log_run_name(log_run_name: str, global_rank: int) -> str:
     return payload[0]
 
 
+def _broadcast_resume_path(resume_path: str | None, global_rank: int) -> str:
+    """Broadcast the resume checkpoint path from rank 0 to every distributed worker."""
+    _init_process_group_if_needed()
+    payload = [resume_path if global_rank == 0 else ""]
+    torch.distributed.broadcast_object_list(payload, src=0)
+    path = payload[0]
+    if not path:
+        raise ValueError("Rank 0 failed to resolve resume checkpoint path.")
+    return path
+
+
 def _resolve_log_dir(
     log_root_path: str,
     *,
@@ -194,11 +208,14 @@ def _resolve_log_dir(
     """Resolve the log directory and optional checkpoint path for this run."""
     os.makedirs(log_root_path, exist_ok=True)
 
+    # Resolve checkpoint from prior runs before creating a new log directory (Isaac Lab behavior).
+    resume_path = None
     if resume:
-        resume_path = get_resume_checkpoint_path(log_root_path, load_run, load_checkpoint)
-        log_dir = os.path.dirname(resume_path)
-        print(f"[INFO] Resuming training in log directory: {log_dir}")
-        return log_dir, resume_path
+        if global_rank == 0:
+            resume_path = get_resume_checkpoint_path(log_root_path, load_run, load_checkpoint)
+        if distributed:
+            resume_path = _broadcast_resume_path(resume_path, global_rank)
+        print(f"[INFO] Resuming weights from checkpoint: {resume_path}")
 
     log_run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if run_name:
@@ -209,7 +226,9 @@ def _resolve_log_dir(
     print(f"Exact experiment name requested from command line: {log_run_name}")
     log_dir = os.path.join(log_root_path, log_run_name)
     os.makedirs(log_dir, exist_ok=True)
-    return log_dir, None
+    if resume:
+        print(f"[INFO] Logging new run to directory: {log_dir}")
+    return log_dir, resume_path
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
