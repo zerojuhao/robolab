@@ -498,7 +498,7 @@ class ParkourRewardsCfg:
     dont_wait = RewTerm(func=mdp.dont_wait, weight=-0.5, params={"command_name": "base_velocity"})
     is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
     # stand_still = RewTerm(func=mdp.stand_still, weight=-1.0, params={"command_name": "base_velocity"})
-    base_vel_z_penalty = RewTerm(func=mdp.base_vel_z_penalty, weight=-0.5)
+    base_vel_z_penalty = RewTerm(func=mdp.base_vel_z_penalty, weight=-5.0)
 
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
@@ -608,7 +608,7 @@ class ParkourRewardsCfg:
     )
     sound_suppression = RewTerm(
         func=mdp.sound_suppression_acc_per_foot,
-        weight=-5e-4,
+        weight=-5e-3,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
@@ -841,7 +841,7 @@ class CurriculumCfg:
             "final_weight": -100.0,
             "lin_vel_threshold": (0.4, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.01,
+            "step_size": 0.1,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
@@ -852,7 +852,7 @@ class CurriculumCfg:
             "final_weight": -100.0,
             "lin_vel_threshold": (0.4, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.01,
+            "step_size": 0.1,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -863,7 +863,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.4, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.01,
+            "step_size": 0.1,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -874,7 +874,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.4, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.01,
+            "step_size": 0.1,
         },
     )
 

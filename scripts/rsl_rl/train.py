@@ -253,6 +253,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.seed = seed
         agent_cfg.seed = seed
 
+    # AppLauncher only sets global_rank when distributed=True
+    global_rank = getattr(app_launcher, "global_rank", 0)
+
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
@@ -266,7 +269,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         load_checkpoint=agent_cfg.load_checkpoint,
         run_name=agent_cfg.run_name or None,
         distributed=args_cli.distributed,
-        global_rank=app_launcher.global_rank,
+        global_rank=global_rank,
     )
 
     # set the IO descriptors output directory if requested
@@ -320,7 +323,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner.load(resume_path, map_location=agent_cfg.device)
 
     # dump the configuration into log-directory (rank 0 only in distributed mode)
-    if not args_cli.distributed or app_launcher.global_rank == 0:
+    if not args_cli.distributed or global_rank == 0:
         dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
         dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
 
