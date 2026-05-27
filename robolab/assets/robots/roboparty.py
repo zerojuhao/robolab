@@ -153,3 +153,31 @@ ATOM01_CFG = ArticulationCfg(
         ),
     },
 )
+
+
+ATOM01_LINKS = [
+    "base_link",
+    "left_thigh_yaw_link",
+    "left_thigh_roll_link",
+    "left_thigh_pitch_link",
+    "left_knee_link",
+    "left_ankle_pitch_link",
+    "left_ankle_roll_link",
+    "right_thigh_yaw_link",
+    "right_thigh_roll_link",
+    "right_thigh_pitch_link",
+    "right_knee_link",
+    "right_ankle_pitch_link",
+    "right_ankle_roll_link",
+    "torso_link",
+    "left_arm_pitch_link",
+    "left_arm_roll_link",
+    "left_arm_yaw_link",
+    "left_elbow_pitch_link",
+    "left_elbow_yaw_link",
+    "right_arm_pitch_link",
+    "right_arm_roll_link",
+    "right_arm_yaw_link",
+    "right_elbow_pitch_link",
+    "right_elbow_yaw_link",
+]

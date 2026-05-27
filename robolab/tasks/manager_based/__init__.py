@@ -34,3 +34,4 @@ Manager-based tasks.
 """
 
 from .amp import *
+from .parkour import *

@@ -30,14 +30,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """
-This module provides functionality to convert motion data from GMR format to Legged Lab format.
+This module provides functionality to convert motion data from GMR format to Isaac Lab format.
 
 Ref: 
     - https://github.com/xbpeng/MimicKit/blob/main/tools/gmr_to_mimickit/gmr_to_mimickit.py
     - https://github.com/HybridRobotics/whole_body_tracking/blob/main/scripts/csv_to_npz.py
 
 What does this script do?
-    - Reorder the dof data from GMR (in mujoco order) to Legged Lab (in Isaac Lab order).
+    - Reorder the dof data from GMR (in mujoco order) to Isaac Lab (in Isaac Lab order).
     - Add loop mode to the motion data.
 
 Usage: 
@@ -175,7 +175,7 @@ from isaaclab.scene import InteractiveScene
 # Pre-defined configs
 ##
 if args_cli.robot == "atom01":
-    from legged_lab.assets.roboparty import ATOM01_CFG as ROBOT_CFG
+    from robolab.assets.robots.roboparty import ATOM01_CFG as ROBOT_CFG
 else:
     raise ValueError(f"Robot {args_cli.robot} not supported.")
 

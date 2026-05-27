@@ -30,7 +30,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """
-This module provides functionality to convert motion data from GMR format to Legged Lab format.
+This module provides functionality to convert motion data from GMR format to Isaac Lab format.
 
 Ref: 
     - https://github.com/xbpeng/MimicKit/blob/main/tools/gmr_to_mimickit/gmr_to_mimickit.py
@@ -45,8 +45,8 @@ GMR Format:
     - 'local_body_pos': Currently unused (can be None)
     - 'link_body_list': Currently unused (can be None)
 
-Output Legged Lab Format:
-    The output Legged Lab format is a dictionary with keys:
+Output Isaac Lab Format:
+    The output Isaac Lab format is a dictionary with keys:
     - 'fps': Frame rate (int)
     - 'root_pos': Root position array, shape (num_frames, 3)
     - 'root_rot': Root rotation quaternions, shape (num_frames, 4), format (w, x, y, z)
@@ -121,7 +121,7 @@ def extract_gmr_data(
         end_frame = num_frames
     assert 0 <= start_frame < end_frame <= num_frames, "Invalid start_frame or end_frame."
     
-    # Get the mapping indices from GMR to Legged Lab
+    # Get the mapping indices from GMR to Isaac Lab
     gmr_to_lab_indices = []
     for lab_dof in lab_dof_names:
         if lab_dof in gmr_dof_names:
@@ -131,7 +131,12 @@ def extract_gmr_data(
             raise ValueError(f"DOF name '{lab_dof}' not found in GMR DOF names.")
 
     dof_pos_lab = dof_pos[:, gmr_to_lab_indices]
-    
+
+    # set the elbow yaw joint to 0.0, actually these joints do not need to do action for atom01
+    for i, lab_dof in enumerate(lab_dof_names):
+        if lab_dof.endswith("_elbow_yaw_joint"):
+            dof_pos_lab[:, i] = 0.0
+
     output_data = {
         'fps': fps,
         'root_pos': root_pos[start_frame:end_frame],
@@ -187,13 +192,13 @@ def run_simulator(
     max_num_frames = max(num_frames_list)
     
     lab_body_names = robot.data.body_names
-    # print(f"[INFO]: Legged Lab body names: {lab_body_names}")
+    # print(f"[INFO]: Isaac Lab body names: {lab_body_names}")
     key_body_indices = []
     for name in key_body_names:
         if name in lab_body_names:
             key_body_indices.append(lab_body_names.index(name))
         else:
-            raise ValueError(f"Key body name '{name}' not found in Legged Lab body names.")
+            raise ValueError(f"Key body name '{name}' not found in Isaac Lab body names.")
     key_body_pos_w_list = [
         torch.zeros((num_frames, len(key_body_indices), 3), device=scene.device) 
         for num_frames in num_frames_list
