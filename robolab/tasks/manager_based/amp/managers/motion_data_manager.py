@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 import numpy as np
 import enum
-import joblib
+import pickle
 import torch
 from prettytable import PrettyTable
 from typing import TYPE_CHECKING
@@ -103,7 +103,8 @@ class MotionDataTerm(ManagerTermBase):
             # load the motion data file
             motion_path = os.path.join(self.cfg.motion_data_dir, motion_file)
             print(f"[Motion Data Manager] Loading motion data from {motion_path}...")
-            motion_raw_data = joblib.load(motion_path)
+            with open(motion_path, "rb") as f:
+                motion_raw_data = pickle.load(f)
             if not isinstance(motion_raw_data, dict):
                 raise ValueError(f"Motion data file {motion_file} does not contain a valid dictionary.")
             

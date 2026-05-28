@@ -80,8 +80,8 @@ class Atom01ParkourRoughEnvCfg_PLAY(Atom01ParkourRoughEnvCfg):
         # spawn the robot randomly in the grid (instead of their terrain levels)
         # reduce the number of terrains to save memory
         if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.num_rows = 1
-            self.scene.terrain.terrain_generator.num_cols = 1
+            self.scene.terrain.terrain_generator.num_rows = 4
+            self.scene.terrain.terrain_generator.num_cols = 4
 
         self.scene.leg_volume_points.debug_vis = True
         self.scene.knee_volume_points.debug_vis = True

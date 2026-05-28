@@ -58,9 +58,8 @@ Output Isaac Lab Format:
 """
 
 
-import joblib
-import numpy as np
 import pickle
+import numpy as np
 import enum
 import torch
 
@@ -88,7 +87,7 @@ def extract_gmr_data(
     end_frame: int = -1,
 ):
     with open(gmr_file_path, 'rb') as f:
-        gmr_data = joblib.load(f)
+        gmr_data = pickle.load(f)
         
     # Extract data from GMR format
     fps = gmr_data['fps']

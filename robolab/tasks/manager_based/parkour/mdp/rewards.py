@@ -10,7 +10,6 @@ from isaaclab.assets import RigidObject, Articulation
 import isaaclab.utils.math as math_utils
 from robolab.sensors.volume_points import VolumePoints
 from robolab.sensors.volume_points.points_generator import grid3d_points_generator
-from robolab.sensors.volume_points.points_generator_cfg import Grid3dPointsGeneratorCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -303,6 +302,81 @@ def track_ang_vel_z_exp(
     return reward
 
 
+def volume_points_penetration_feet(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    tolerance: float = 0.0,
+    enable_terrain_foot_weights: bool = False,
+    stairs_weight_min: float = 0.2,
+    stairs_weight_max: float = 1.0,
+    debug_print_terrain: bool = False,
+) -> torch.Tensor:
+    """Penalize the penetration of volume points into the environment."""
+    # extract the used quantities (to enable type-hinting)
+    volume_sensor: VolumePoints = env.scene.sensors[sensor_cfg.name]
+    # compute the reward
+    penetration = volume_sensor.data.penetration_offset  # (N, B_, P_, 3) where B_ and P_ varies in sensors
+    num_envs, num_bodies, num_points, _ = penetration.shape
+    penetration = penetration.flatten(1, 2)  # (N, B_*P_, 3)
+    penetration_depth = torch.norm(penetration, dim=-1)  # (N, B_*P_)
+    in_obstacle = (penetration_depth > tolerance).float()  # (N, B_*P_)
+    points_vel = volume_sensor.data.points_vel_w  # (N, B_, P_, 3) where B_ and P_ varies in sensors
+    points_vel = points_vel.flatten(1, 2)  # (N, B_*P_, 3)
+    points_vel_norm = torch.norm(points_vel, dim=-1)  # (N, B_*P_)
+    velocity_times_penetration = in_obstacle * (points_vel_norm + 1e-6) * penetration_depth  # (N, B_*P_)
+
+    if enable_terrain_foot_weights:
+        terrain = env.scene.terrain
+        if terrain.cfg.terrain_type == "generator":
+            gen_cfg = terrain.cfg.terrain_generator
+            sub_names = list(gen_cfg.sub_terrains.keys())
+            terrain_gen = getattr(terrain, "terrain_generator", None)
+            if terrain_gen is None or not hasattr(terrain_gen, "get_subterrain_indices"):
+                raise RuntimeError(
+                    "terrain_generator with subterrain_index_grid is required for enable_terrain_foot_weights. "
+                    "Use robolab.terrains.TerrainImporter with terrain_type='generator' and FiledTerrainGeneratorCfg."
+                )
+            sub_idx_per_env = terrain_gen.get_subterrain_indices(
+                terrain.terrain_levels, terrain.terrain_types, device=env.device
+            )
+
+            if debug_print_terrain:
+                for i in range(num_envs):
+                    name = sub_names[sub_idx_per_env[i].item()]
+                    if "pyramid_stairs_inv" in name:
+                        label = "up"
+                    elif "pyramid_stairs" in name and "inv" not in name:
+                        label = "down"
+                    else:
+                        label = "other"
+                    print(f"env {i}: {label}, {name}")
+
+            mask_up = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+            mask_down = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+            for sub_idx, name in enumerate(sub_names):
+                if "pyramid_stairs_inv" in name:
+                    mask_up |= sub_idx_per_env == sub_idx
+                elif "pyramid_stairs" in name and "inv" not in name:
+                    mask_down |= sub_idx_per_env == sub_idx
+
+            points_cfg = volume_sensor.cfg.points_generator
+            local_points = grid3d_points_generator(points_cfg).to(env.device)
+            x_frac = (local_points[:, 0] - points_cfg.x_min) / (points_cfg.x_max - points_cfg.x_min + 1e-8)
+            x_frac = x_frac.clamp(0.0, 1.0)
+            w_stairs = stairs_weight_min + (stairs_weight_max - stairs_weight_min) * x_frac
+
+            env_w = torch.ones(num_envs, num_points, device=env.device)
+            stairs_mask = mask_up | mask_down
+            if stairs_mask.any():
+                env_w[stairs_mask] = w_stairs.unsqueeze(0)
+
+            velocity_times_penetration = velocity_times_penetration.view(num_envs, num_bodies, num_points)
+            velocity_times_penetration = velocity_times_penetration * env_w.unsqueeze(1)
+            velocity_times_penetration = velocity_times_penetration.flatten(1, 2)
+
+    return torch.sum(velocity_times_penetration, dim=-1)
+
+
 def volume_points_penetration(
     env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, tolerance: float = 0.0
 ) -> torch.Tensor:
@@ -321,7 +395,7 @@ def volume_points_penetration(
 
     return torch.sum(velocity_times_penetration, dim=-1)
 
-
+    
 def step_safety(
     env: ManagerBasedRLEnv,
     volume_points_cfg: SceneEntityCfg,

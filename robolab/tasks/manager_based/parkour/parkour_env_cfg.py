@@ -225,9 +225,9 @@ class SceneCfg(InteractiveSceneCfg):
     # sensors
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/torso_link",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 5.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.0, 0.5]),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[2.0, 1.0]),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
@@ -315,13 +315,13 @@ class ObservationsCfg:
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, history_length=8, flatten_history_dim=True)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, history_length=8, flatten_history_dim=True)
         actions = ObsTerm(func=mdp.last_action, history_length=8, flatten_history_dim=True)
-        # height_scan = ObsTerm(
-        #     func=mdp.height_scan,
-        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-        #     clip=(-2.0, 2.0),
-        #     history_length=8,
-        #     flatten_history_dim=True,
-        # )
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-5.0, 5.0),
+            history_length=8,
+            flatten_history_dim=True,
+        )
         depth_image = ObsTerm(
             func=mdp.delayed_visualizable_image,
             params={
@@ -502,15 +502,19 @@ class ParkourRewardsCfg:
 
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
-        func=mdp.volume_points_penetration,
-        weight=-1.0,
+        func=mdp.volume_points_penetration_feet,
+        weight=-10.0,
         params={
             "sensor_cfg": SceneEntityCfg("leg_volume_points"),
+            "enable_terrain_foot_weights": True,
+            "stairs_weight_min": 0.2,
+            "stairs_weight_max": 1.0,
+            "debug_print_terrain": False,
         },
     )
     volume_points_penetration_knee = RewTerm(
         func=mdp.volume_points_penetration,
-        weight=-1.0,
+        weight=-10.0,
         params={
             "sensor_cfg": SceneEntityCfg("knee_volume_points"),
         },
@@ -829,29 +833,29 @@ class CurriculumCfg:
         func=mdp.tracking_exp_vel,
         params={
             "lin_vel_threshold": (0.7, 0.9),
-            "ang_vel_threshold": (0.7, 0.8),
+            "ang_vel_threshold": (0.0, 0.0),
         },
     )
     volume_points_penetration_weight_feet = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
             "term_name": "volume_points_penetration_feet",
-            "init_weight": -1.0,
+            "init_weight": -10.0,
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
-            "ang_vel_threshold": (0.7, 0.8),
-            "step_size": 0.01,
+            "ang_vel_threshold": (0.0, 0.0),
+            "step_size": 0.1,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
             "term_name": "volume_points_penetration_knee",
-            "init_weight": -1.0,
+            "init_weight": -10.0,
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
-            "ang_vel_threshold": (0.7, 0.8),
-            "step_size": 0.01,
+            "ang_vel_threshold": (0.0, 0.0),
+            "step_size": 0.1,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -861,8 +865,8 @@ class CurriculumCfg:
             "init_weight": -1.0,
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
-            "ang_vel_threshold": (0.7, 0.8),
-            "step_size": 0.01,
+            "ang_vel_threshold": (0.0, 0.0),
+            "step_size": 0.1,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -872,8 +876,8 @@ class CurriculumCfg:
             "init_weight": -1.0,
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
-            "ang_vel_threshold": (0.7, 0.8),
-            "step_size": 0.01,
+            "ang_vel_threshold": (0.0, 0.0),
+            "step_size": 0.1,
         },
     )
 
