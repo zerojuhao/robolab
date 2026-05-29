@@ -311,7 +311,12 @@ def volume_points_penetration_feet(
     stairs_weight_max: float = 1.0,
     debug_print_terrain: bool = False,
 ) -> torch.Tensor:
-    """Penalize the penetration of volume points into the environment."""
+    """Penalize volume-point penetration into virtual edge obstacles.
+
+    With ``enable_terrain_foot_weights``, foot-local x maps heel (x_min) to toe (x_max).
+    Up-stairs terrains (``pyramid_stairs_inv``) use toe-heavy weights; down-stairs
+    (``pyramid_stairs``) use heel-heavy weights (inverted along x).
+    """
     # extract the used quantities (to enable type-hinting)
     volume_sensor: VolumePoints = env.scene.sensors[sensor_cfg.name]
     # compute the reward
@@ -363,12 +368,15 @@ def volume_points_penetration_feet(
             local_points = grid3d_points_generator(points_cfg).to(env.device)
             x_frac = (local_points[:, 0] - points_cfg.x_min) / (points_cfg.x_max - points_cfg.x_min + 1e-8)
             x_frac = x_frac.clamp(0.0, 1.0)
-            w_stairs = stairs_weight_min + (stairs_weight_max - stairs_weight_min) * x_frac
+            weight_span = stairs_weight_max - stairs_weight_min
+            w_toe_heavy = stairs_weight_min + weight_span * x_frac
+            w_heel_heavy = stairs_weight_max - weight_span * x_frac
 
             env_w = torch.ones(num_envs, num_points, device=env.device)
-            stairs_mask = mask_up | mask_down
-            if stairs_mask.any():
-                env_w[stairs_mask] = w_stairs.unsqueeze(0)
+            if mask_up.any():
+                env_w[mask_up] = w_toe_heavy.unsqueeze(0)
+            if mask_down.any():
+                env_w[mask_down] = w_heel_heavy.unsqueeze(0)
 
             velocity_times_penetration = velocity_times_penetration.view(num_envs, num_bodies, num_points)
             velocity_times_penetration = velocity_times_penetration * env_w.unsqueeze(1)

@@ -491,7 +491,7 @@ class ParkourRewardsCfg:
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
         func=mdp.volume_points_penetration_feet,
-        weight=-10.0,
+        weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg("leg_volume_points"),
             "enable_terrain_foot_weights": True,
@@ -502,7 +502,7 @@ class ParkourRewardsCfg:
     )
     volume_points_penetration_knee = RewTerm(
         func=mdp.volume_points_penetration,
-        weight=-10.0,
+        weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg("knee_volume_points"),
         },
@@ -828,22 +828,22 @@ class CurriculumCfg:
         func=mdp.modify_rewards_weight,
         params={
             "term_name": "volume_points_penetration_feet",
-            "init_weight": -10.0,
+            "init_weight": -1.0,
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.1,
+            "step_size": 0.03,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
             "term_name": "volume_points_penetration_knee",
-            "init_weight": -10.0,
+            "init_weight": -1.0,
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.1,
+            "step_size": 0.03,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -854,7 +854,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.1,
+            "step_size": 0.03,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -865,7 +865,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.1,
+            "step_size": 0.03,
         },
     )
 
