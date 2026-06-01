@@ -470,7 +470,7 @@ class CommandsCfg:
 
 
 @configclass
-class RewardsCfg(MultiRewardCfg):
+class ParkourRewardsCfg(MultiRewardCfg):
     """Flat reward terms for parkour (single group ``rewards`` for MultiRewardManager)."""
 
     # Task rewards
@@ -631,7 +631,10 @@ class RewardsCfg(MultiRewardCfg):
         },
     )
 
-
+@configclass
+class RewardsCfg(MultiRewardCfg):
+    rewards: ParkourRewardsCfg = ParkourRewardsCfg()
+    
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
