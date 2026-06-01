@@ -131,7 +131,7 @@ def extract_gmr_data(
 
     dof_pos_lab = dof_pos[:, gmr_to_lab_indices]
 
-    # set the elbow yaw joint to 0.0, actually these joints do not need to do action for atom01
+    # set the elbow yaw joint to 0.0, actually these joints do not need to do action for rpo
     for i, lab_dof in enumerate(lab_dof_names):
         if lab_dof.endswith("_elbow_yaw_joint"):
             dof_pos_lab[:, i] = 0.0

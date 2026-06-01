@@ -40,10 +40,11 @@ inherit from ``isaaclab.terrains.terrains_cfg.TerrainConfig`` and define the fol
 """
 
 import robolab.terrains as terrain_gen
-from isaaclab.terrains import FlatPatchSamplingCfg, TerrainGeneratorCfg
+from isaaclab.terrains import FlatPatchSamplingCfg
+from robolab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
 
 
-ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
+ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
     border_width=3,
