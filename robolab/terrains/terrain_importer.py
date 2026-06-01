@@ -5,6 +5,7 @@ import torch
 import trimesh
 from typing import TYPE_CHECKING
 
+import isaaclab.sim as sim_utils
 from isaaclab.terrains import SubTerrainBaseCfg, TerrainGenerator
 from isaaclab.terrains import TerrainImporter as TerrainImporterBase
 from isaaclab.utils.timer import Timer
@@ -26,6 +27,32 @@ class TerrainImporter(TerrainImporterBase):
         if cfg.terrain_type == "hacked_generator":
             self._hacked_terrain_type = "hacked_generator"
             cfg.terrain_type = "plane"
+            super().__init__(cfg)
+            return
+
+        if cfg.terrain_type == "generator":
+            # Keep terrain_generator reference (IsaacLab base discards it after import).
+            cfg.validate()
+            self.cfg = cfg
+            self.device = sim_utils.SimulationContext.instance().device  # type: ignore
+            self.terrain_prim_paths = list()
+            self.terrain_origins = None
+            self.env_origins = None
+            self._terrain_flat_patches = dict()
+            if self.cfg.terrain_generator is None:
+                raise ValueError("Input terrain type is 'generator' but no value provided for 'terrain_generator'.")
+            self.terrain_generator = self.cfg.terrain_generator.class_type(
+                cfg=self.cfg.terrain_generator, device=self.device
+            )
+            self.import_mesh("terrain", self.terrain_generator.terrain_mesh)
+            if self.cfg.use_terrain_origins:
+                self.configure_env_origins(self.terrain_generator.terrain_origins)
+            else:
+                self.configure_env_origins()
+            self._terrain_flat_patches = self.terrain_generator.flat_patches
+            self.set_debug_vis(self.cfg.debug_vis)
+            return
+
         super().__init__(cfg)
 
     @property
