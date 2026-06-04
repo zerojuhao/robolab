@@ -30,10 +30,10 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
             ROBOLAB_ROOT_DIR, "data", "motions", "rpo_lab"
         )
         self.motion_data.motion_dataset.motion_data_weights = {
-            "36_01": 1,
-            "36_11": 1,
-            "114_08": 1,
-            "114_09": 1,
+            # "36_01": 1,
+            # "36_11": 1,
+            # "114_08": 1,
+            # "114_09": 1,
             "A1-_Stand_stageii": 1,
             "B9_-__Walk_turn_left_90_stageii": 1,
             "B10_-__Walk_turn_left_45_stageii": 1,

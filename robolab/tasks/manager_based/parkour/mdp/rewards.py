@@ -58,7 +58,7 @@ def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: Scen
 
 def stand_still(
     env: ManagerBasedRLEnv,
-    command_name: str,
+    command_name: str = "base_velocity",
     joint_pos_weight: float = 0.6,
     joint_vel_weight: float = 0.05,
     body_vel_weight: float = 0.35,

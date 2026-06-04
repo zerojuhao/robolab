@@ -476,17 +476,16 @@ class ParkourRewardsCfg(MultiRewardCfg):
     # Task rewards
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=5.0,
+        weight=2.0,
         params={"command_name": "base_velocity", "std": 0.5},
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=5.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_ang_vel_z_exp, weight=2.0, params={"command_name": "base_velocity", "std": 0.5}
     )
     heading_error = RewTerm(func=mdp.heading_error, weight=-1.0, params={"command_name": "base_velocity"})
     dont_wait = RewTerm(func=mdp.dont_wait, weight=-0.5, params={"command_name": "base_velocity"})
     is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-5.0)
-
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
         func=mdp.volume_points_penetration_feet,
@@ -534,9 +533,6 @@ class ParkourRewardsCfg(MultiRewardCfg):
             ),
         },
     )
-    # left_thigh_yaw_joint_sign = RewTerm(func=mdp.left_thigh_yaw_joint_sign_l1, weight=-1.0)
-    # right_thigh_yaw_joint_sign = RewTerm(func=mdp.right_thigh_yaw_joint_sign_l1, weight=-1.0)
-    thigh_yaw_joint=RewTerm(func=mdp.thigh_yaw_joint_sum, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.1)
     dof_torques_l2 = RewTerm(
         func=mdp.joint_torques_l2,
