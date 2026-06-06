@@ -320,7 +320,8 @@ def volume_points_penetration_feet(
 
     With ``enable_terrain_foot_weights``, foot-local x maps heel (x_min) to toe (x_max).
     Up-stairs terrains (``pyramid_stairs_inv``) use toe-heavy weights; down-stairs
-    (``pyramid_stairs``) use heel-heavy weights (inverted along x).
+    (``pyramid_stairs``) use heel-heavy weights. Other terrains use mid-foot-heavy
+    weights with heel and toe at ``stairs_weight_min`` and mid-foot at ``stairs_weight_max``.
     """
     # extract the used quantities (to enable type-hinting)
     volume_sensor: VolumePoints = env.scene.sensors[sensor_cfg.name]
@@ -376,8 +377,9 @@ def volume_points_penetration_feet(
             weight_span = stairs_weight_max - stairs_weight_min
             w_toe_heavy = stairs_weight_min + weight_span * x_frac
             w_heel_heavy = stairs_weight_max - weight_span * x_frac
+            w_mid_heavy = stairs_weight_min + weight_span * (1.0 - torch.abs(2.0 * x_frac - 1.0))
 
-            env_w = torch.ones(num_envs, num_points, device=env.device)
+            env_w = w_mid_heavy.unsqueeze(0).repeat(num_envs, 1)
             if mask_up.any():
                 env_w[mask_up] = w_toe_heavy.unsqueeze(0)
             if mask_down.any():
