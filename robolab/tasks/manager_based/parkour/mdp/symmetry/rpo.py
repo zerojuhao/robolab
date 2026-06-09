@@ -150,7 +150,8 @@ def _transform_policy_obs_left_right(obs: TensorDict) -> TensorDict:
     obs["joint_pos"] = _switch_joints_left_right_flat(obs["joint_pos"])
     obs["joint_vel"] = _switch_joints_left_right_flat(obs["joint_vel"])
     obs["actions"] = _switch_joints_left_right_flat(obs["actions"])
-    obs["depth_image"] = _transform_depth_obs_left_right(obs["depth_image"])
+    if "depth_image" in obs:
+        obs["depth_image"] = _transform_depth_obs_left_right(obs["depth_image"])
     return obs
 
 
@@ -164,7 +165,8 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
     obs["joint_pos"] = _switch_joints_left_right_flat(obs["joint_pos"])
     obs["joint_vel"] = _switch_joints_left_right_flat(obs["joint_vel"])
     obs["actions"] = _switch_joints_left_right_flat(obs["actions"])
-    obs["depth_image"] = _transform_depth_obs_left_right(obs["depth_image"])
+    if "depth_image" in obs:
+        obs["depth_image"] = _transform_depth_obs_left_right(obs["depth_image"])
     if "height_scan" in obs:
         obs["height_scan"] = _transform_height_scan_left_right(env, obs["height_scan"])
     return obs
@@ -243,12 +245,6 @@ In Isaac Sim, the joint ordering is as follows:
 'right_elbow_yaw_joint'   #22
 ]
 
-Correspondingly, the joint ordering for the ANYmal robot is:
-
-* LF = left front --> [0, 4, 8]
-* LH = left hind --> [1, 5, 9]
-* RF = right front --> [2, 6, 10]
-* RH = right hind --> [3, 7, 11]
 """
 
 

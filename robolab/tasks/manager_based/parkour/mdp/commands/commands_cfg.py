@@ -64,6 +64,9 @@ class PoseVelocityCommandCfg(CommandTermCfg):
     rel_standing_envs: float = 0.0
     """The sampled probability of environments that should be standing still. Defaults to 0.0."""
 
+    straight_target_prob: float = 0.0
+    """Probability of forcing the sampled target y to the robot's current y for straight walking."""
+
     target_dis_threshold: float = 0.2
     """The distance threshold to the target position below which the command is set to zero. Defaults to 0.2."""
 

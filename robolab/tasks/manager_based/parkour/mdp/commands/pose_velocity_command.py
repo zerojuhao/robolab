@@ -176,6 +176,13 @@ class PoseVelocityCommand(CommandTerm):
         self.pos_command_w[env_ids] = self.valid_targets[
             self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids], ids
         ]
+        if self.cfg.straight_target_prob > 0.0:
+            straight_mask = torch.rand(len(env_ids), device=self.device) < self.cfg.straight_target_prob
+            self.pos_command_w[env_ids, 1] = torch.where(
+                straight_mask,
+                self.robot.data.root_pos_w[env_ids, 1],
+                self.pos_command_w[env_ids, 1],
+            )
 
         # sample velocity commands
         r = torch.empty(len(env_ids), device=self.device)

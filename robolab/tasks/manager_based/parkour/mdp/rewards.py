@@ -58,7 +58,7 @@ def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: Scen
 
 def stand_still(
     env: ManagerBasedRLEnv,
-    command_name: str,
+    command_name: str = "base_velocity",
     joint_pos_weight: float = 0.6,
     joint_vel_weight: float = 0.05,
     body_vel_weight: float = 0.35,
@@ -91,31 +91,18 @@ def joint_deviation_l1(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scene
     return torch.sum(torch.abs(angle), dim=1)
 
 
-def left_thigh_yaw_joint_sign_l1(
+
+def rpo_thigh_yaw_joint_sign_penalty(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    joint_name: str = "left_thigh_yaw_joint",
 ) -> torch.Tensor:
-    """Penalize left thigh yaw above zero."""
+    """Penalize right thigh yaw below zero and left thigh yaw above zero."""
     asset = env.scene[asset_cfg.name]
-    if joint_name not in asset.joint_names:
-        return torch.zeros(asset.data.joint_pos.shape[0], device=asset.data.joint_pos.device)
-    joint_id = asset.joint_names.index(joint_name)
-    return torch.clamp(asset.data.joint_pos[:, joint_id], min=0.0)
-
-
-def right_thigh_yaw_joint_sign_l1(
-    env: ManagerBasedRLEnv,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    joint_name: str = "right_thigh_yaw_joint",
-) -> torch.Tensor:
-    """Penalize right thigh yaw below zero."""
-    asset = env.scene[asset_cfg.name]
-    if joint_name not in asset.joint_names:
-        return torch.zeros(asset.data.joint_pos.shape[0], device=asset.data.joint_pos.device)
-    joint_id = asset.joint_names.index(joint_name)
-    return torch.clamp(-asset.data.joint_pos[:, joint_id], min=0.0)
-
+    right_thigh_yaw_joint_index = asset.joint_names.index("right_thigh_yaw_joint")
+    left_thigh_yaw_joint_index = asset.joint_names.index("left_thigh_yaw_joint")
+    left_thigh_yaw_penalty = torch.where(asset.data.joint_pos[:, left_thigh_yaw_joint_index] > 0.0, asset.data.joint_pos[:, left_thigh_yaw_joint_index], 0.0)
+    right_thigh_yaw_penalty = torch.where(asset.data.joint_pos[:, right_thigh_yaw_joint_index] < 0.0, -asset.data.joint_pos[:, right_thigh_yaw_joint_index], 0.0)
+    return left_thigh_yaw_penalty + right_thigh_yaw_penalty
 
 def body_distance_y(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), min: float = 0.2, max: float = 0.5
@@ -335,7 +322,8 @@ def volume_points_penetration_feet(
 
     With ``enable_terrain_foot_weights``, foot-local x maps heel (x_min) to toe (x_max).
     Up-stairs terrains (``pyramid_stairs_inv``) use toe-heavy weights; down-stairs
-    (``pyramid_stairs``) use heel-heavy weights (inverted along x).
+    (``pyramid_stairs``) use heel-heavy weights. Other terrains use mid-foot-heavy
+    weights with heel and toe at ``stairs_weight_min`` and mid-foot at ``stairs_weight_max``.
     """
     # extract the used quantities (to enable type-hinting)
     volume_sensor: VolumePoints = env.scene.sensors[sensor_cfg.name]
@@ -391,8 +379,9 @@ def volume_points_penetration_feet(
             weight_span = stairs_weight_max - stairs_weight_min
             w_toe_heavy = stairs_weight_min + weight_span * x_frac
             w_heel_heavy = stairs_weight_max - weight_span * x_frac
+            w_mid_heavy = stairs_weight_min + weight_span * (1.0 - torch.abs(2.0 * x_frac - 1.0))
 
-            env_w = torch.ones(num_envs, num_points, device=env.device)
+            env_w = w_mid_heavy.unsqueeze(0).repeat(num_envs, 1)
             if mask_up.any():
                 env_w[mask_up] = w_toe_heavy.unsqueeze(0)
             if mask_down.any():

@@ -31,6 +31,8 @@
 
 import numpy as np
 import mujoco, mujoco_viewer
+from collections import deque
+from typing import Any
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
 import torch
@@ -39,6 +41,86 @@ import matplotlib.pyplot as plt
 from pynput import keyboard
 import time
 from robolab.assets import ISAAC_DATA_DIR
+
+_OBS_HISTORY_KEYS = (
+    "base_ang_vel",
+    "projected_gravity",
+    "velocity_commands",
+    "joint_pos",
+    "joint_vel",
+    "actions",
+)
+
+
+class TermHistory:
+    """Isaac CircularBuffer semantics: maxlen ring, flattened oldest-to-newest per observation term."""
+
+    def __init__(self, max_len: int, term_dim: int):
+        self.max_len = max_len
+        self.term_dim = term_dim
+        self._dq: deque[np.ndarray] = deque(maxlen=max_len)
+
+    def reset(self):
+        self._dq.clear()
+
+    def append(self, x: np.ndarray):
+        self._dq.append(np.asarray(x, dtype=np.float32).reshape(-1))
+
+    def fill_tile(self, x: np.ndarray):
+        self.reset()
+        v = np.asarray(x, dtype=np.float32).reshape(-1)
+        for _ in range(self.max_len):
+            self._dq.append(v.copy())
+
+    def flat(self) -> np.ndarray:
+        if len(self._dq) == 0:
+            return np.zeros(self.max_len * self.term_dim, dtype=np.float32)
+        return np.concatenate(list(self._dq), axis=0)
+
+
+def open_interactive_viewer(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    fallback_width: int = 1920,
+    fallback_height: int = 1080,
+    show_left_ui: bool | None = False,
+    show_right_ui: bool | None = False,
+) -> tuple[Any, bool, Any]:
+    """Prefer the official MuJoCo passive viewer, matching the parkour sim2sim UI."""
+    sl = False if show_left_ui is None else bool(show_left_ui)
+    sr = False if show_right_ui is None else bool(show_right_ui)
+    try:
+        import mujoco.viewer
+
+        ctx = mujoco.viewer.launch_passive(
+            model,
+            data,
+            show_left_ui=int(sl),
+            show_right_ui=int(sr),
+        )
+        viewer = ctx.__enter__()
+        viewer.cam.distance = 4.0
+        viewer.cam.azimuth = 45.0
+        viewer.cam.elevation = -20.0
+        viewer.cam.lookat[:] = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        return viewer, True, ctx
+    except Exception as e:
+        print(f"[WARN] launch_passive unavailable ({e!r}); falling back to mujoco_viewer.")
+        viewer = mujoco_viewer.MujocoViewer(
+            model, data, mode="window", width=int(fallback_width), height=int(fallback_height)
+        )
+        viewer.cam.distance = 4.0
+        viewer.cam.azimuth = 45.0
+        viewer.cam.elevation = -20.0
+        viewer.cam.lookat = [0, 0, 1]
+        return viewer, False, None
+
+
+def close_interactive_viewer(viewer: Any, use_passive: bool, passive_ctx: Any) -> None:
+    if use_passive and passive_ctx is not None:
+        passive_ctx.__exit__(None, None, None)
+    elif viewer is not None:
+        viewer.close()
 
 class cmd:
     vx = 0.0
@@ -61,19 +143,16 @@ class cmd:
     def update_vx(cls, delta):
         """update forward velocity"""
         cls.vx = np.clip(cls.vx + delta, cls.min_vx, cls.max_vx)
-        print(f"vx: {cls.vx:.2f}, vy: {cls.vy:.2f}, dyaw: {cls.dyaw:.2f}")
     
     @classmethod
     def update_vy(cls, delta):
         """update lateral velocity"""
         cls.vy = np.clip(cls.vy + delta, cls.min_vy, cls.max_vy)
-        print(f"vx: {cls.vx:.2f}, vy: {cls.vy:.2f}, dyaw: {cls.dyaw:.2f}")
     
     @classmethod
     def update_dyaw(cls, delta):
         """update angular velocity"""
         cls.dyaw = np.clip(cls.dyaw + delta, cls.min_dyaw, cls.max_dyaw)
-        print(f"vx: {cls.vx:.2f}, vy: {cls.vy:.2f}, dyaw: {cls.dyaw:.2f}")
 
     @classmethod
     def toggle_camera_follow(cls):
@@ -144,6 +223,16 @@ def get_obs(data):
     gvec = r.apply(np.array([0., 0., -1.]), inverse=True).astype(np.double)
     return (q, dq, quat, v, omega, gvec)
 
+def viewer_velocity_overlay(viewer, cmd_vx, cmd_vy, cmd_wz, base_v, base_omega):
+    """Show command and measured base-frame velocity in the active MuJoCo viewer."""
+    left_col = f"cmd vx:{float(cmd_vx):+.3f} vy:{float(cmd_vy):+.3f} wz:{float(cmd_wz):+.3f}"
+    right_col = f"vel vx:{float(base_v[0]):+.3f} vy:{float(base_v[1]):+.3f} wz:{float(base_omega[2]):+.3f}"
+    if hasattr(viewer, "set_texts"):
+        viewer.set_texts((None, None, left_col, right_col))
+    elif hasattr(viewer, "_overlay"):
+        gridpos = mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT
+        viewer._overlay[gridpos] = [left_col, right_col]
+
 def pd_control(target_q, q, kp, target_dq, dq, kd):
     '''Calculates torques from position commands
     '''
@@ -197,20 +286,25 @@ def run_mujoco(policy, cfg, headless=False):
         cam.lookat = [0, 0, 1]  
         out = cv2.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
     else:
-        mode = 'window'
-        viewer = mujoco_viewer.MujocoViewer(model, data, mode=mode, width=1920, height=1080)
-        
-        viewer.cam.distance = 4.0
-        viewer.cam.azimuth = 45.0
-        viewer.cam.elevation = -20.0
-        viewer.cam.lookat = [0, 0, 1]
+        viewer, use_passive_viewer, passive_viewer_ctx = open_interactive_viewer(
+            model,
+            data,
+            fallback_width=1920,
+            fallback_height=1080,
+        )
 
 
     target_pos = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
     action = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
 
-    hist_obs = np.zeros((cfg.robot_config.frame_stack, cfg.robot_config.num_observations), dtype=np.double)
-    hist_obs.fill(0.0)
+    hist = {
+        "base_ang_vel": TermHistory(cfg.robot_config.frame_stack, 3),
+        "projected_gravity": TermHistory(cfg.robot_config.frame_stack, 3),
+        "velocity_commands": TermHistory(cfg.robot_config.frame_stack, 3),
+        "joint_pos": TermHistory(cfg.robot_config.frame_stack, cfg.robot_config.num_actions),
+        "joint_vel": TermHistory(cfg.robot_config.frame_stack, cfg.robot_config.num_actions),
+        "actions": TermHistory(cfg.robot_config.frame_stack, cfg.robot_config.num_actions),
+    }
 
     count_lowlevel = 0
 
@@ -231,15 +325,23 @@ def run_mujoco(policy, cfg, headless=False):
     start_time = time.time()
     
     for step in tqdm(range(int(cfg.sim_config.sim_duration / cfg.sim_config.dt)), desc="Simulating..."):
+        if not headless and use_passive_viewer and not viewer.is_running():
+            print("[INFO] Viewer closed; exiting simulation loop.")
+            break
 
         if cmd.reset_requested:
-            print('Performing reset: restoring qpos/qvel and zeroing commands')
             data.qpos[:] = initial_qpos
             data.qvel[:] = initial_qvel
             # clear commands and history
             cmd.reset()
             data.ctrl[:] = 0.0
             mujoco.mj_forward(model, data)
+            action[:] = 0.0
+            target_pos[:] = cfg.robot_config.default_pos.copy()
+            tau[:] = 0.0
+            for h in hist.values():
+                h.reset()
+            is_first_frame = True
             cmd.reset_requested = False
 
         # Obtain an observation
@@ -256,27 +358,27 @@ def run_mujoco(policy, cfg, headless=False):
                 q_obs[i] = q_[cfg.robot_config.usd2urdf[i]]
                 dq_obs[i] = dq[cfg.robot_config.usd2urdf[i]]
 
-            obs = np.zeros([1, cfg.robot_config.num_observations], dtype=np.float32)
-            
-            obs[0, 0:3] = omega
-            obs[0, 3:6] = gvec
-            obs[0, 6] = cmd.vx 
-            obs[0, 7] = cmd.vy 
-            obs[0, 8] = cmd.dyaw 
-            obs[0, 9:32] = q_obs
-            obs[0, 32:55] = dq_obs
-            obs[0, 55:78] = action
-            # print("action:", action)
-            print("current command: lin vel x={:.2f}, lin vel y={:.2f}, ang vel z={:.2f}".format(cmd.vx, cmd.vy, cmd.dyaw))  
-            print("current velocity: lin vel x={:.2f}, lin vel y={:.2f}, ang vel z={:.2f}".format(v[0], v[1], omega[2]))
+            vecs_policy = (
+                omega.astype(np.float32),
+                gvec.astype(np.float32),
+                np.array([cmd.vx, cmd.vy, cmd.dyaw], dtype=np.float32),
+                q_obs.astype(np.float32),
+                dq_obs.astype(np.float32),
+                action.astype(np.float32),
+            )
 
             if is_first_frame:
-                hist_obs = np.tile(obs, (cfg.robot_config.frame_stack, 1))
+                for key, vec in zip(_OBS_HISTORY_KEYS, vecs_policy):
+                    hist[key].fill_tile(vec)
                 is_first_frame = False
             else:
-                hist_obs = np.concatenate((hist_obs[1:], obs.reshape(1, -1)), axis=0)
+                for key, vec in zip(_OBS_HISTORY_KEYS, vecs_policy):
+                    hist[key].append(vec)
 
-            policy_input = hist_obs.reshape(1, -1).astype(np.float32)
+            policy_input = np.concatenate([hist[k].flat() for k in _OBS_HISTORY_KEYS], axis=0)[None, :].astype(np.float32)
+            assert policy_input.shape[1] == cfg.robot_config.num_observations, (
+                f"Expected policy input dim {cfg.robot_config.num_observations}, got {policy_input.shape[1]}."
+            )
             with torch.inference_mode():
                 action[:] = policy(torch.tensor(policy_input))[0].detach().numpy()
 
@@ -315,8 +417,17 @@ def run_mujoco(policy, cfg, headless=False):
             else:
                 if cmd.camera_follow:
                     base_pos = data.qpos[0:3].tolist()
-                    viewer.cam.lookat = [float(base_pos[0]), float(base_pos[1]), float(base_pos[2])]
-                viewer.render()
+                    if use_passive_viewer:
+                        viewer.cam.lookat[:] = np.array(
+                            [float(base_pos[0]), float(base_pos[1]), float(base_pos[2])], dtype=np.float64
+                        )
+                    else:
+                        viewer.cam.lookat = [float(base_pos[0]), float(base_pos[1]), float(base_pos[2])]
+                viewer_velocity_overlay(viewer, cmd.vx, cmd.vy, cmd.dyaw, v, omega)
+                if use_passive_viewer:
+                    viewer.sync()
+                else:
+                    viewer.render()
             
         target_vel = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
         # Generate PD control
@@ -337,7 +448,7 @@ def run_mujoco(policy, cfg, headless=False):
     if headless:
         out.release()
     else:
-        viewer.close()
+        close_interactive_viewer(viewer, use_passive_viewer, passive_viewer_ctx)
     
     # Stop keyboard listener
     keyboard_listener.stop()
@@ -435,7 +546,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deployment script.')
     parser.add_argument('--load_model', 
                         # type=str, 
-                        default="/home/msi/桌面/rpo_train/logs/rsl_rl/rpo_amp/2026-03-03_11-44-01/exported/policy.pt",
+                        default="policy.pt",
                         help='Run to load from.')
     parser.add_argument('--terrain', action='store_true', default='plane', help='terrain or plane')
     parser.add_argument('--headless', action='store_true', help='Run without GUI and save video')
@@ -455,9 +566,9 @@ if __name__ == '__main__':
             kds = np.array([3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 5.0, 2.0, 2.0, 2.0, 1.5, 1.0, 2.0, 2.0, 2.0, 1.5, 1.0], dtype=np.double)
             default_pos = np.array([0, 0, -0.1, 0.3, -0.2, 0, 0, 0, -0.1, 0.3, -0.2, 0, 0, 0.18, 0.06, 0, 0.78, 0, 0.18, -0.06, 0, 0.78, 0], dtype=np.double)
             tau_limit = 200. * np.ones(23, dtype=np.double)
-            frame_stack = 1
+            frame_stack = 1 # obs history length
             num_single_obs = 78
-            num_observations = 78 * frame_stack
+            num_observations = num_single_obs * frame_stack
             num_actions = 23
             action_scale = 0.25
             # 'left_thigh_yaw_joint', 'right_thigh_yaw_joint', 'torso_joint', 'left_thigh_roll_joint', 'right_thigh_roll_joint', 'left_arm_pitch_joint', 'right_arm_pitch_joint', 'left_thigh_pitch_joint', 'right_thigh_pitch_joint', 'left_arm_roll_joint', 'right_arm_roll_joint', 'left_knee_joint', 'right_knee_joint', 'left_arm_yaw_joint', 'right_arm_yaw_joint', 'left_ankle_pitch_joint', 'right_ankle_pitch_joint', 'left_elbow_pitch_joint', 'right_elbow_pitch_joint', 'left_ankle_roll_joint', 'right_ankle_roll_joint', 'left_elbow_yaw_joint', 'right_elbow_yaw_joint'

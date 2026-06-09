@@ -12,12 +12,13 @@ from robolab.tasks.manager_based.parkour.mdp.symmetry import rpo
 class RslRlPpoEncoderMoEActorCriticCfg:
     class_name: str = "EncoderMoEActorCritic"
     init_noise_std: float = 1.0
-    num_moe_experts: int = 10
+    noise_std_type: str = "log"
+    num_moe_experts: int = 5
     moe_gate_hidden_dims: list[int] = []
     actor_hidden_dims: list[int] = [256, 128, 64]
     critic_hidden_dims: list[int] = [256, 128, 64]
-    actor_obs_normalization: bool = True
-    critic_obs_normalization: bool = True
+    actor_obs_normalization: bool = False # NOTE!: DO NOT SET TO TRUE, OR IT WILL CAUSE THE ROBOT TO CRASH IN REAL-WORLD DEPLOYMENT CAUSE WE USE THE LATENT ENCODER FOR DEPTH OBSERVATIONS!
+    critic_obs_normalization: bool = False
     activation: str = "elu"
     actor_encoder_obs_groups: list[str] = ["depth_image"]
     critic_encoder_obs_groups: list[str] = ["depth_image"]
@@ -30,6 +31,7 @@ class RslRlPpoEncoderMoEActorCriticCfg:
         "paddings": [1],
         "nonlinearity": "ReLU",
         "use_maxpool": True,
+        "last_activation": "ReLU",
     }
     encoder_onnx_stems: dict[str, str] = {"depth_image": "depth_encoder"}
     encoder_onnx_sequential_idx: int = 0

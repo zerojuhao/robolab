@@ -47,13 +47,14 @@ import isaaclab.terrains as terrain_gen
 from robolab.assets.robots.roboparty import RPO_CFG
 from robolab import ROBOLAB_ROOT_DIR
 
+# NOTE: KEY_BODY_NAMES must match lab_key_body_names in robolab/scripts/tools/retarget/config/rpo.yaml
 KEY_BODY_NAMES = [
     "left_ankle_roll_link", 
     "right_ankle_roll_link",
+    "left_knee_link",
+    "right_knee_link",
     "left_elbow_yaw_link",
-    "right_elbow_yaw_link",
-    "left_arm_roll_link",
-    "right_arm_roll_link"
+    "right_elbow_yaw_link"
 ]
 ANIMATION_TERM_NAME = "animation"
 AMP_NUM_STEPS = 3

@@ -58,6 +58,8 @@ def compute_symmetric_states(
 ):
     """Augments the given observations and actions by applying symmetry transformations.
 
+    ``env`` is kept for compatibility with RSL-RL's symmetry callback signature.
+
     This function creates augmented versions of the provided observations and actions by applying
     four symmetrical transformations: original, left-right, front-back, and diagonal. The symmetry
     transformations are beneficial for reinforcement learning tasks by providing additional
@@ -82,13 +84,13 @@ def compute_symmetric_states(
         # -- original
         obs_aug["policy"][:batch_size] = obs["policy"][:]
         # -- left-right
-        obs_aug["policy"][batch_size : 2 * batch_size] = _transform_policy_obs_left_right(env.unwrapped, obs["policy"])
-        
+        obs_aug["policy"][batch_size : 2 * batch_size] = _transform_policy_obs_left_right(env, obs["policy"])
+
         # critic observation group
         # -- original
         obs_aug["critic"][:batch_size] = obs["critic"][:]
         # -- left-right
-        obs_aug["critic"][batch_size : 2 * batch_size] = _transform_critic_obs_left_right(env.unwrapped, obs["critic"])
+        obs_aug["critic"][batch_size : 2 * batch_size] = _transform_critic_obs_left_right(env, obs["critic"])
 
     else:
         obs_aug = None
@@ -112,81 +114,76 @@ def compute_symmetric_states(
 """
 Symmetry functions for observations.
 """
+def _history_length(env: ManagerBasedRLEnv, group_name: str) -> int:
+    cfg = getattr(env, "unwrapped", env).cfg
+    history_length = getattr(getattr(cfg.observations, group_name), "history_length", 0)
+    return history_length if history_length is not None and history_length > 0 else 1
 
 
 def _transform_policy_obs_left_right(env: ManagerBasedRLEnv, obs: torch.Tensor) -> torch.Tensor:
-    """Apply a left-right symmetry transformation to the observation tensor.
-
-    This function modifies the given observation tensor by applying transformations
-    that represent a symmetry with respect to the left-right axis. This includes
-    negating certain components of the linear and angular velocities, projected gravity,
-    velocity commands, and flipping the joint positions, joint velocities, and last actions
-    for the ANYmal robot. Additionally, if height-scan data is present, it is flipped
-    along the relevant dimension.
-
-    Args:
-        env: The environment instance from which the observation is obtained.
-        obs: The observation tensor to be transformed.
-
-    Returns:
-        The transformed observation tensor with left-right symmetry applied.
-    """
-    # copy observation tensor
+    """Left-right mirror for flat policy observations (``ObservationsCfg.PolicyCfg`` with ``concatenate_terms=True``)."""
+    obs_shape = obs.shape
+    history_length = _history_length(env, "policy")
+    expected_dim = history_length * (3 + 3 + 3 + 23 + 23 + 23)
+    assert obs_shape[-1] == expected_dim, f"Expected policy obs dim to be {expected_dim}, got {obs_shape[-1]}."
     obs = obs.clone()
-    device = obs.device
-    # ang vel
-    obs[:, 0:3] = obs[:, 0:3] * torch.tensor([-1, 1, -1], device=device)
-    # projected gravity
-    obs[:, 3:6] = obs[:, 3:6] * torch.tensor([1, -1, 1], device=device)
-    # velocity command
-    obs[:, 6:9] = obs[:, 6:9] * torch.tensor([1, -1, -1], device=device)
-    # joint pos
-    obs[:, 9:32] = _switch_joints_left_right(obs[:, 9:32])
-    # joint vel
-    obs[:, 32:55] = _switch_joints_left_right(obs[:, 32:55])
-    # last actions
-    obs[:, 55:78] = _switch_joints_left_right(obs[:, 55:78])
-
+    offset = 0
+    term_dim = 3 * history_length
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [-1, 1, -1])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [1, -1, 1])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [1, -1, -1])
+    offset += term_dim
+    term_dim = 23 * history_length
+    obs[..., offset : offset + term_dim] = _switch_joints_left_right_flat(obs[..., offset : offset + term_dim])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _switch_joints_left_right_flat(obs[..., offset : offset + term_dim])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _switch_joints_left_right_flat(obs[..., offset : offset + term_dim])
+    offset += term_dim
     return obs
 
 
 def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: torch.Tensor) -> torch.Tensor:
-    """Apply a left-right symmetry transformation to the observation tensor.
-
-    This function modifies the given observation tensor by applying transformations
-    that represent a symmetry with respect to the left-right axis. This includes
-    negating certain components of the linear and angular velocities, projected gravity,
-    velocity commands, and flipping the joint positions, joint velocities, and last actions
-    for the ANYmal robot. Additionally, if height-scan data is present, it is flipped
-    along the relevant dimension.
-
-    Args:
-        env: The environment instance from which the observation is obtained.
-        obs: The observation tensor to be transformed.
-
-    Returns:
-        The transformed observation tensor with left-right symmetry applied.
-    """
-    # copy observation tensor
+    """Left-right mirror for flat critic observations."""
+    obs_shape = obs.shape
+    history_length = _history_length(env, "critic")
+    expected_dim = history_length * (3 + 3 + 3 + 3 + 23 + 23 + 23)
+    assert obs_shape[-1] == expected_dim, f"Expected critic obs dim to be {expected_dim}, got {obs_shape[-1]}."
     obs = obs.clone()
-    device = obs.device
-    # lin vel
-    obs[:, 0:3] = obs[:, 0:3] * torch.tensor([1, -1, 1], device=device)
-    # ang vel
-    obs[:, 3:6] = obs[:, 3:6] * torch.tensor([-1, 1, -1], device=device)
-    # projected gravity
-    obs[:, 6:9] = obs[:, 6:9] * torch.tensor([1, -1, 1], device=device)
-    # velocity command
-    obs[:, 9:12] = obs[:, 9:12] * torch.tensor([1, -1, -1], device=device)
-    # joint pos
-    obs[:, 12:35] = _switch_joints_left_right(obs[:, 12:35])
-    # joint vel
-    obs[:, 35:58] = _switch_joints_left_right(obs[:, 35:58])
-    # last actions
-    obs[:, 58:81] = _switch_joints_left_right(obs[:, 58:81])
-
+    offset = 0
+    term_dim = 3 * history_length
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [1, -1, 1])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [-1, 1, -1])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [1, -1, 1])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _apply_xyz_sign(obs[..., offset : offset + term_dim], [1, -1, -1])
+    offset += term_dim
+    term_dim = 23 * history_length
+    obs[..., offset : offset + term_dim] = _switch_joints_left_right_flat(obs[..., offset : offset + term_dim])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _switch_joints_left_right_flat(obs[..., offset : offset + term_dim])
+    offset += term_dim
+    obs[..., offset : offset + term_dim] = _switch_joints_left_right_flat(obs[..., offset : offset + term_dim])
+    offset += term_dim
     return obs
 
+
+def _apply_xyz_sign(obs: torch.Tensor, signs: list[int]) -> torch.Tensor:
+    obs_shape = obs.shape
+    obs = obs.reshape(*obs_shape[:-1], -1, 3)
+    obs = obs * torch.tensor(signs, device=obs.device, dtype=obs.dtype)
+    return obs.reshape(obs_shape)
+
+
+def _switch_joints_left_right_flat(joint_data: torch.Tensor) -> torch.Tensor:
+    joint_data_shape = joint_data.shape
+    joint_data = joint_data.reshape(*joint_data_shape[:-1], -1, 23)
+    joint_data = _switch_joints_left_right(joint_data)
+    return joint_data.reshape(joint_data_shape)
 
 
 """
@@ -243,12 +240,6 @@ In Isaac Sim, the joint ordering is as follows:
 'right_elbow_yaw_joint'   #22
 ]
 
-Correspondingly, the joint ordering for the ANYmal robot is:
-
-* LF = left front --> [0, 4, 8]
-* LH = left hind --> [1, 5, 9]
-* RF = right front --> [2, 6, 10]
-* RH = right hind --> [3, 7, 11]
 """
 
 
@@ -261,8 +252,5 @@ def _switch_joints_left_right(joint_data: torch.Tensor) -> torch.Tensor:
     joint_data_switched[..., [1, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]] = joint_data[..., [0, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]]
     
     joint_data_switched[..., [0,1,2,3,4,9,10,13,14,19,20,21,22]] = -1 * joint_data_switched[..., [0,1,2,3,4,9,10,13,14,19,20,21,22]]
-    # joint_data_switched[..., [5,6,7,8,11,12,15,16,17,18]] = joint_data[..., [5,6,7,8,11,12,15,16,17,18]]
-
-    # joint_data_switched[..., [0,1,2,3,4,9,10,13,14,19,20,21,22]] *= -1
 
     return joint_data_switched

@@ -791,13 +791,14 @@ def run_mujoco_onnx(
     target_pos = np.zeros((cfg.robot_config.num_actions,), dtype=np.double)
     action = np.zeros((cfg.robot_config.num_actions,), dtype=np.double)
 
+    frame_stack = int(cfg.robot_config.frame_stack)
     hist = {
-        "base_ang_vel": TermHistory(8, 3),
-        "projected_gravity": TermHistory(8, 3),
-        "velocity_commands": TermHistory(8, 3),
-        "joint_pos": TermHistory(8, cfg.robot_config.num_actions),
-        "joint_vel": TermHistory(8, cfg.robot_config.num_actions),
-        "actions": TermHistory(8, cfg.robot_config.num_actions),
+        "base_ang_vel": TermHistory(frame_stack, 3),
+        "projected_gravity": TermHistory(frame_stack, 3),
+        "velocity_commands": TermHistory(frame_stack, 3),
+        "joint_pos": TermHistory(frame_stack, cfg.robot_config.num_actions),
+        "joint_vel": TermHistory(frame_stack, cfg.robot_config.num_actions),
+        "actions": TermHistory(frame_stack, cfg.robot_config.num_actions),
     }
     depth_ring: deque[np.ndarray] = deque(maxlen=_DEPTH_HISTORY_LEN)
     is_first_policy = True
@@ -1086,7 +1087,7 @@ def run_mujoco_onnx(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RPO parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
-        "robolab/logs/rsl_rl/rpo_parkour/2026-05-21_00-37-00/exported"
+        "exported"
     )
     parser.add_argument(
         "--depth_encoder",
@@ -1160,6 +1161,7 @@ if __name__ == "__main__":
                 dtype=np.double,
             )
             tau_limit = 200.0 * np.ones(23, dtype=np.double)
+            frame_stack = 8  # obs history length
             num_actions = 23
             action_scale = 0.25
             usd2urdf = [0, 6, 12, 1, 7, 13, 18, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22]
