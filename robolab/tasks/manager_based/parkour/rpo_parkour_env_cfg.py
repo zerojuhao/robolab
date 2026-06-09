@@ -40,8 +40,8 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
             "B13_-__Walk_turn_right_90_stageii": 1,
             "B14_-__Walk_turn_right_45_t2_stageii": 1,
             "B15_-__Walk_turn_around_stageii": 1,
-            "turn_l": 10,
-            "turn_r": 10,
+            "turn_l": 1,
+            "turn_r": 1,
         }
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
         self.observations.disc.history_length = AMP_NUM_STEPS

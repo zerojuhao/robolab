@@ -152,25 +152,25 @@ class RPOAmpEnvCfg(AmpEnvCfg):
         self.motion_data.motion_dataset.motion_data_weights={
             
             # CMU
-            # "127_04": 1, # walk to run
-            # "127_06": 1, # run 
+            "127_04": 1, # walk to run
+            "127_06": 1, # run 
             
             #ACCAD
             "A1-_Stand_stageii": 1,
             
-            # "B9_-__Walk_turn_left_90_stageii":1,
-            # "B10_-__Walk_turn_left_45_stageii":1,
-            # "B13_-__Walk_turn_right_90_stageii":1,
-            # "B14_-__Walk_turn_right_45_t2_stageii":1,
-            # "B15_-__Walk_turn_around_stageii":1,
+            "B9_-__Walk_turn_left_90_stageii":1,
+            "B10_-__Walk_turn_left_45_stageii":1,
+            "B13_-__Walk_turn_right_90_stageii":1,
+            "B14_-__Walk_turn_right_45_t2_stageii":1,
+            "B15_-__Walk_turn_around_stageii":1,
             
-            # "C12_-_run_turn_left_45_stageii":1,
-            # "C17_-_run_change_direction_stageii":1,
+            "C12_-_run_turn_left_45_stageii":1,
+            "C17_-_run_change_direction_stageii":1,
             
             # GVHMR
-            # "move_back":1,
-            # "move_l":1,
-            # "move_r":1,
+            "move_back":1,
+            "move_l":1,
+            "move_r":1,
             "turn_l":1,
             "turn_r":1,
         }
@@ -235,8 +235,8 @@ class RPOAmpEnvCfg(AmpEnvCfg):
         # Commands
         # ------------------------------------------------------
         
-        self.commands.base_velocity.ranges.lin_vel_x = (-0.0, 0.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.5, 2.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
         self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
                 
         # ------------------------------------------------------
