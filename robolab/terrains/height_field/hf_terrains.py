@@ -1394,3 +1394,57 @@ def perlin_square_gap_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinSqua
 
     # round off the heights to the nearest vertical step
     return np.rint(hf_raw).astype(np.int16)
+
+
+@generate_wall
+@height_field_to_mesh
+def perlin_threshold_bars_terrain(
+    difficulty: float, cfg: hf_terrains_cfg.PerlinThresholdBarsTerrainCfg
+) -> np.ndarray:
+    """Generate flat terrain with threshold bars along x, each spanning the full y width."""
+    threshold_height = cfg.threshold_height_range[0] + difficulty * (
+        cfg.threshold_height_range[1] - cfg.threshold_height_range[0]
+    )
+    threshold_width = cfg.threshold_width_range[0] + difficulty * (
+        cfg.threshold_width_range[1] - cfg.threshold_width_range[0]
+    )
+
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    threshold_spacing_px = max(1, round(cfg.threshold_spacing / cfg.horizontal_scale))
+    threshold_width_px = max(1, round(threshold_width / cfg.horizontal_scale))
+    threshold_height_px = round(threshold_height / cfg.vertical_scale)
+    platform_width_px = round(cfg.platform_width / cfg.horizontal_scale)
+    border_px = round(cfg.border_width / cfg.horizontal_scale)
+
+    platform_start_x = (width_pixels - platform_width_px) // 2
+    platform_end_x = platform_start_x + platform_width_px
+    platform_start_y = (length_pixels - platform_width_px) // 2
+    platform_end_y = platform_start_y + platform_width_px
+
+    hf_raw = np.zeros((width_pixels, length_pixels))
+
+    x = border_px
+    x_limit = width_pixels - border_px
+    while x + threshold_width_px <= x_limit:
+        bar_end_x = x + threshold_width_px
+        overlaps_platform_x = not (bar_end_x <= platform_start_x or x >= platform_end_x)
+        if not overlaps_platform_x:
+            hf_raw[x:bar_end_x, :] = threshold_height_px
+        x += threshold_width_px + threshold_spacing_px
+
+    hf_raw[platform_start_x:platform_end_x, platform_start_y:platform_end_y] = 0
+
+    if cfg.perlin_cfg is not None:
+        perlin_cfg = cfg.perlin_cfg
+        perlin_cfg.size = cfg.size
+        perlin_cfg.horizontal_scale = cfg.horizontal_scale
+        perlin_cfg.vertical_scale = cfg.vertical_scale
+        perlin_cfg.slope_threshold = cfg.slope_threshold
+        perlin_noise = generate_perlin_noise(
+            difficulty,
+            perlin_cfg,  # type: ignore[arg-type]
+        )
+        hf_raw += perlin_noise
+
+    return np.rint(hf_raw).astype(np.int16)

@@ -50,8 +50,8 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
 class ShoeConfigMixin:
     def apply_shoe_config(self):
         self.scene.robot = RPO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        self.scene.leg_volume_points.points_generator.z_min = -0.063
-        self.scene.leg_volume_points.points_generator.z_max = -0.023
+        self.scene.feet_volume_points.points_generator.z_min = -0.063
+        self.scene.feet_volume_points.points_generator.z_max = -0.023
         self.rewards.rewards.feet_at_plane.params["height_offset"] = 0.058
 
 
@@ -80,10 +80,10 @@ class RPOParkourRoughEnvCfg_PLAY(RPOParkourRoughEnvCfg):
         # spawn the robot randomly in the grid (instead of their terrain levels)
         # reduce the number of terrains to save memory
         if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.num_rows = 1
-            self.scene.terrain.terrain_generator.num_cols = 1
+            self.scene.terrain.terrain_generator.num_rows = 5
+            self.scene.terrain.terrain_generator.num_cols = 5
 
-        self.scene.leg_volume_points.debug_vis = True
+        self.scene.feet_volume_points.debug_vis = True
         self.scene.knee_volume_points.debug_vis = True
         self.commands.base_velocity.debug_vis = True
         self.events.physics_material = None

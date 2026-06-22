@@ -155,6 +155,110 @@ RPO_CFG = ArticulationCfg(
 )
 
 
+RP1_CFG = ArticulationCfg(
+    spawn=sim_utils.UrdfFileCfg(
+        asset_path=f"{ISAAC_DATA_DIR}/robots/roboparty/rp1/urdf/rp1.urdf",
+        fix_base=False,
+        activate_contact_sensors=True,
+        replace_cylinders_with_capsules=True,
+        joint_drive = sim_utils.UrdfConverterCfg.JointDriveCfg(
+            gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
+        ),
+        articulation_props = sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=True,
+            solver_position_iteration_count=8,
+            solver_velocity_iteration_count=4,
+        ),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.78),
+        joint_pos={
+            "left_hip_pitch_joint": -0.1,
+            "left_knee_joint": -0.3,
+            "left_ankle_pitch_joint": -0.2,
+            "left_shoulder_pitch_joint": 0.18,
+            "left_shoulder_roll_joint": 0.18,
+            "left_elbow_joint": -1.2,
+            "right_hip_pitch_joint": 0.1,
+            "right_knee_joint": 0.3,
+            "right_ankle_pitch_joint": -0.2,
+            "right_shoulder_pitch_joint": -0.18,
+            "right_shoulder_roll_joint": -0.18,
+            "right_elbow_joint": 1.2,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.90,
+    actuators={
+        "waist": DelayedPDActuatorCfg(
+            joint_names_expr=[".*waist.*"],
+            effort_limit_sim=141.7,
+            velocity_limit_sim=14.24192,
+            stiffness=198.521,
+            damping=15.798,
+            armature=0.125715,
+            min_delay=0,
+            max_delay=4,
+        ),
+        "hip": DelayedPDActuatorCfg(
+            joint_names_expr=[".*_hip.*"],
+            effort_limit_sim=141.7,
+            velocity_limit_sim=14.24192,
+            stiffness=148.891,
+            damping=9.479,
+            armature=0.125715,
+            min_delay=0,
+            max_delay=4,
+        ),
+        "knee": DelayedPDActuatorCfg(
+            joint_names_expr=[".*_knee_joint"],
+            effort_limit_sim=141.7,
+            velocity_limit_sim=14.24192,
+            stiffness=198.521,
+            damping=12.638,
+            armature=0.125715,
+            min_delay=0,
+            max_delay=4,
+        ),
+        "ankle": DelayedPDActuatorCfg(
+            joint_names_expr=[".*_ankle_pitch_joint", ".*_ankle_roll_joint"],
+            effort_limit_sim=70.6,
+            velocity_limit_sim=21.88648,
+            stiffness=40.193,
+            damping=2.559,
+            armature=0.040724,
+            min_delay=0,
+            max_delay=4,
+        ),
+        "arm": DelayedPDActuatorCfg(
+            joint_names_expr=[
+                ".*_shoulder_pitch_joint",
+                ".*_shoulder_roll_joint",
+                ".*_shoulder_yaw_joint",
+                ".*elbow.*",
+                ".*_wrist_roll_joint",
+            ],
+            effort_limit_sim=35.3,
+            velocity_limit_sim=21.88648,
+            stiffness=40.193,
+            damping=2.559,
+            armature=0.020362,
+            min_delay=0,
+            max_delay=4,
+        ),
+    },
+)
+
+
 RPO_LINKS = [
     "base_link",
     "left_thigh_yaw_link",
@@ -180,4 +284,32 @@ RPO_LINKS = [
     "right_arm_yaw_link",
     "right_elbow_pitch_link",
     "right_elbow_yaw_link",
+]
+
+PR1_LINKS = [
+    'base_link',
+    'right_hip_pitch_link',
+    'right_hip_roll_link',
+    'right_hip_yaw_link',
+    'right_knee_link',
+    'right_ankle_pitch_link',
+    'right_ankle_roll_link',
+    'left_hip_pitch_link',
+    'left_hip_roll_link',
+    'left_hip_yaw_link',
+    'left_knee_link',
+    'left_ankle_pitch_link',
+    'left_ankle_roll_link',
+    'waist_roll_link',
+    'waist_yaw_link',
+    'left_shoulder_pitch_link',
+    'left_shoulder_roll_link',
+    'left_shoulder_yaw_link',
+    'left_elbow_link',
+    'left_wrist_roll_link',
+    'right_shoulder_pitch_link',
+    'right_shoulder_roll_link',
+    'right_shoulder_yaw_link',
+    'right_elbow_link',
+    'right_wrist_roll_link'
 ]

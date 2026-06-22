@@ -1193,7 +1193,7 @@ def run_mujoco_onnx(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RPO parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
-        "roboparty_train/logs/rsl_rl/exported"
+        "exported"
     )
     parser.add_argument(
         "--depth_encoder",

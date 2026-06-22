@@ -14,11 +14,15 @@ VOLUME_POINTS_VISUALIZER_CFG = VisualizationMarkersCfg(
     markers={
         "sphere": sim_utils.SphereCfg(
             radius=0.01,
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(0.0, 1.0, 0.0),
+            ),
         ),
         "sphere_penetrated": sim_utils.SphereCfg(
             radius=0.01,
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(1.0, 0.0, 0.0),
+            ),
         ),
     },
 )

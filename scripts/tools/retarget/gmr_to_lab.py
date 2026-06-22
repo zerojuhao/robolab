@@ -59,6 +59,7 @@ Output Isaac Lab Format:
 
 
 import pickle
+import re
 import numpy as np
 import enum
 import torch
@@ -131,9 +132,9 @@ def extract_gmr_data(
 
     dof_pos_lab = dof_pos[:, gmr_to_lab_indices]
 
-    # set the elbow yaw joint to 0.0, actually these joints do not need to do action for rpo
+    # set elbow joints to 0.0, these joints do not need to do action for rpo
     for i, lab_dof in enumerate(lab_dof_names):
-        if lab_dof.endswith("_elbow_yaw_joint"):
+        if re.search(r"_elbow_.+_joint$", lab_dof):
             dof_pos_lab[:, i] = 0.0
 
     output_data = {

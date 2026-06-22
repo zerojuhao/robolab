@@ -60,6 +60,19 @@ class MotionMatchedTerrainCfg(SubTerrainBaseCfg):
 
 
 @configclass
+class StaticMeshTerrainCfg(SubTerrainBaseCfg):
+    """Load a mesh file directly without MotionMatched crop/shift transforms."""
+
+    function = mesh_terrains.static_mesh_terrain
+
+    path: str = MISSING
+    """Directory that contains the mesh file."""
+
+    mesh_file: str = MISSING
+    """Mesh filename relative to ``path`` (``.obj`` / ``.stl``)."""
+
+
+@configclass
 class PerlinMeshFloatingBoxTerrainCfg(SubTerrainBaseCfg, WallTerrainCfgMixin):
     """Configuration for a floating box mesh terrain."""
 

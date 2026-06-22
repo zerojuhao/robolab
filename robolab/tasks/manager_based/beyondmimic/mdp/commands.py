@@ -99,6 +99,7 @@ class MotionCommand(CommandTerm):
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.robot_anchor_body_index = self.robot.body_names.index(self.cfg.anchor_body_name)
         self.motion_anchor_body_index = self.cfg.body_names.index(self.cfg.anchor_body_name)
+        self.motion_root_body_index = self.robot.body_names.index(self.cfg.root_body_name)
         self.body_indexes = torch.tensor(
             self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0], dtype=torch.long, device=self.device
         )
@@ -284,10 +285,11 @@ class MotionCommand(CommandTerm):
         self.motion_ended[env_ids] = False
         self.steps_after_motion_end[env_ids] = 0
 
-        root_pos = self.body_pos_w[:, 0].clone()
-        root_ori = self.body_quat_w[:, 0].clone()
-        root_lin_vel = self.body_lin_vel_w[:, 0].clone()
-        root_ang_vel = self.body_ang_vel_w[:, 0].clone()
+        env_origins = self._env.scene.env_origins
+        root_pos = self.motion._body_pos_w[self.time_steps, self.motion_root_body_index] + env_origins
+        root_ori = self.motion._body_quat_w[self.time_steps, self.motion_root_body_index].clone()
+        root_lin_vel = self.motion._body_lin_vel_w[self.time_steps, self.motion_root_body_index].clone()
+        root_ang_vel = self.motion._body_ang_vel_w[self.time_steps, self.motion_root_body_index].clone()
 
         range_list = [self.cfg.pose_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
         ranges = torch.tensor(range_list, device=self.device)
@@ -405,6 +407,8 @@ class MotionCommandCfg(CommandTermCfg):
 
     motion_file: str = MISSING
     anchor_body_name: str = MISSING
+    root_body_name: str = "base_link"
+    """Articulation root link used when writing ``write_root_state_to_sim`` on reset."""
     body_names: list[str] = MISSING
 
     pose_range: dict[str, tuple[float, float]] = {}

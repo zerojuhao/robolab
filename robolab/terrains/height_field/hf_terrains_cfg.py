@@ -214,3 +214,27 @@ class PerlinSquareGapTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
     border_width: float = 0.0
 
     perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
+class PerlinThresholdBarsTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
+    """Flat ground with threshold bars spaced along x, each spanning the full y width."""
+
+    function = hf_terrains.perlin_threshold_bars_terrain
+
+    threshold_spacing: float = 0.3
+    """Gap between adjacent threshold bars along x (in m)."""
+
+    threshold_width_range: tuple[float, float] = (0.05, 0.10)
+    """Width of each threshold bar along x (in m)."""
+
+    threshold_height_range: tuple[float, float] = (0.05, 0.20)
+    """Height of each threshold bar (in m)."""
+
+    platform_width: float = 2.0
+    """Flat spawn platform at the terrain center (in m)."""
+
+    border_width: float = 0.5
+    """Flat margin without threshold bars at terrain borders (in m)."""
+
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None

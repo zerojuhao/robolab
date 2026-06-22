@@ -57,31 +57,31 @@ import pickle
 
 from isaaclab.app import AppLauncher
 
-# append AppLauncher cli args
 parser = argparse.ArgumentParser(description="Batch retarget GMR -> Isaac Lab (multiple files).")
 parser.add_argument(
     "--robot",
     type=str,
-    default="rpo", 
-    help="Robot name to use (default: rpo)",
+    default="rp1",
+    choices=["rpo", "rp1"],
+    help="Robot name to use (default: rp1)",
 )
 parser.add_argument(
     "--input_dir",
     type=str,
-    default="robolab/data/motions/rpo_gmr",
-    help="Directory containing input GMR .pkl files",
+    default=None,
+    help="Directory containing input GMR .pkl files (default: robolab/data/motions/<robot>_gmr)",
 )
 parser.add_argument(
     "--output_dir",
     type=str,
-    default="robolab/data/motions/rpo_lab",
-    help="Directory to write converted .pkl files",
+    default=None,
+    help="Directory to write converted .pkl files (default: robolab/data/motions/<robot>_lab)",
 )
 parser.add_argument(
     "--config_file",
     type=str,
-    default="robolab/scripts/tools/retarget/config/rpo.yaml",
-    help="Path to YAML config containing gmr_dof_names, lab_dof_names, lab_key_body_names",
+    default=None,
+    help="Path to YAML config (default: robolab/scripts/tools/retarget/config/<robot>.yaml)",
 )
 parser.add_argument(
     "--loop",
@@ -93,6 +93,13 @@ parser.add_argument(
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+
+if args_cli.input_dir is None:
+    args_cli.input_dir = f"robolab/data/motions/{args_cli.robot}_gmr"
+if args_cli.output_dir is None:
+    args_cli.output_dir = f"robolab/data/motions/{args_cli.robot}_lab"
+if args_cli.config_file is None:
+    args_cli.config_file = f"robolab/scripts/tools/retarget/config/{args_cli.robot}.yaml"
 
 """Launch Omniverse App"""
 app_launcher = AppLauncher(args_cli)
@@ -109,6 +116,8 @@ from isaaclab.scene import InteractiveScene
 # load robot cfg as single_retarget does
 if args_cli.robot == "rpo":
     from robolab.assets.robots.roboparty import RPO_CFG as ROBOT_CFG
+elif args_cli.robot == "rp1":
+    from robolab.assets.robots.roboparty import RP1_CFG as ROBOT_CFG
 else:
     raise ValueError(f"Robot {args_cli.robot} not supported.")
 

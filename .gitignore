@@ -7,3 +7,5 @@ run_bash.sh
 wandb
 *.png
 *.mp4
+# robolab/tasks/manager_based/perceptive/
+# robolab/tasks/manager_based/perceptive_hoi/

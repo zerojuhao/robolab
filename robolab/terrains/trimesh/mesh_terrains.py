@@ -17,6 +17,23 @@ if TYPE_CHECKING:
     from . import mesh_terrains_cfg
 
 
+def static_mesh_terrain(
+    difficulty: float, cfg: mesh_terrains_cfg.StaticMeshTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Load a mesh file so that final world coordinates match the OBJ file.
+
+    TerrainGenerator applies ``(-size/2, -size/2)`` in ``_get_terrain_mesh`` and
+    again in ``_combine_and_center``. We pre-shift by ``(+size/2, +size/2)`` so the
+    two offsets cancel and Isaac world frame matches the authored OBJ coordinates.
+    """
+    del difficulty
+    mesh_path = os.path.join(cfg.path, cfg.mesh_file)
+    mesh = trimesh.load(mesh_path, force="mesh")
+    half_xy = np.array([cfg.size[0] * 0.5, cfg.size[1] * 0.5, 0.0])
+    mesh.vertices += half_xy
+    return [mesh], half_xy.copy()
+
+
 @generate_wall
 def motion_matched_terrain(
     difficulty: float, cfg: mesh_terrains_cfg.MotionMatchedTerrainCfg

@@ -252,6 +252,13 @@ def link_orientation(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEn
 
     return torch.sum(torch.square(link_projected_gravity[:, :2]), dim=1)
 
+
+def link_ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize xy angular velocity of specified link(s) in world frame using L2 squared kernel."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    link_ang_vel_xy = asset.data.body_ang_vel_w[:, asset_cfg.body_ids, :2]
+    return torch.sum(torch.square(link_ang_vel_xy), dim=(1, 2))
+
 def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     # extract the used quantities (to enable type-hinting)
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
