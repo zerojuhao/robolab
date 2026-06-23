@@ -61,8 +61,8 @@ _OBS_HISTORY_KEYS: tuple[str, ...] = (
     "joint_vel",
     "actions",
 )
-# Extrinsic: same as camera.offset.pos — camera origin in base_link frame (world: x + R_base @ pos).
-_CAMERA_OFFSET_POS_BODY = np.array([0.14425, 0.01, 0.5187], dtype=np.float64)
+# Extrinsic: RP1ParkourEnvCfg scene.camera.offset on waist_yaw_link (world: x + R_waist @ pos).
+_CAMERA_OFFSET_POS_BODY = np.array([0.09175, 0.01, 0.3982], dtype=np.float64)
 # Offset rot (w,x,y,z) per GroupedRayCasterCameraCfg / IsaacLab (not scipy order).
 _CAMERA_OFFSET_QUAT_WXYZ = np.array([0.92388, 0.0, 0.38268, 0.0], dtype=np.float64)
 # Depth clip: MJCF <map znear> × extent; keep small to avoid near-field stair tread culling.

@@ -50,8 +50,8 @@ KEY_BODY_NAMES = [
     "right_elbow_yaw_link"
 ]
 
-# Shared with leg_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
-LEG_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
+# Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
+FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     x_min=-0.05,
     x_max=0.13,
     x_num=19,
@@ -124,9 +124,9 @@ class SceneCfg(InteractiveSceneCfg):
         update_period=0.02,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
-    leg_volume_points = VolumePointsCfg(
+    feet_volume_points = VolumePointsCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*_ankle_roll_link",
-        points_generator=LEG_VOLUME_POINTS_GRID,
+        points_generator=FEET_VOLUME_POINTS_GRID,
         debug_vis=False,
     )
     knee_volume_points = VolumePointsCfg(
@@ -155,9 +155,9 @@ class SceneCfg(InteractiveSceneCfg):
         offset=NoisyGroupedRayCasterCameraCfg.OffsetCfg(
             # RP1 D435i camera offset
             pos=(
-                0.14425,
-                0.01,
-                0.5187,
+                0.9175,
+                0.011,
+                0.3982,
             ),
             rot=(
                 0.92388,
@@ -505,7 +505,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
         func=mdp.volume_points_penetration_feet,
         weight=-1.0,
         params={
-            "sensor_cfg": SceneEntityCfg("leg_volume_points"),
+            "sensor_cfg": SceneEntityCfg("feet_volume_points"),
             "enable_terrain_foot_weights": True,
             "stairs_weight_min": 0.0,
             "stairs_weight_max": 1.0,
@@ -517,6 +517,15 @@ class ParkourRewardsCfg(MultiRewardCfg):
         weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg("knee_volume_points"),
+        },
+    )
+    feet_air_time_positive_biped = RewTerm(
+        func=mdp.feet_air_time_positive_biped,
+        weight=0.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
+            "command_name": "base_velocity",
+            "threshold": 0.4,
         },
     )
     feet_slide = RewTerm(
@@ -758,7 +767,7 @@ class EventCfg:
         func=mdp.register_virtual_obstacle_to_sensor,
         mode="startup",
         params={
-            "sensor_cfgs": SceneEntityCfg("leg_volume_points"),
+            "sensor_cfgs": SceneEntityCfg("feet_volume_points"),
         },
     )
     
@@ -876,7 +885,7 @@ class MonitorCfg:
 @configclass
 class ParkourEnvCfg(AmpEnvCfg):
     # Scene settings
-    scene: SceneCfg = SceneCfg(num_envs=4096, env_spacing=2.5)
+    scene: SceneCfg = SceneCfg(num_envs=1024, env_spacing=2.5)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
