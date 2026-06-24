@@ -31,9 +31,9 @@ FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     y_min=-0.04,
     y_max=0.04,
     y_num=9,
-    z_min=-0.04,
-    z_max=-0.02,
-    z_num=7,
+    z_min=-0.05,
+    z_max=-0.03,
+    z_num=3,
 )
 KNEE_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     x_min=-0.02,
