@@ -584,14 +584,14 @@ class ParkourRewardsCfg(MultiRewardCfg):
         weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="waist_yaw_link")},
     )
-    # feet_flat_ori = RewTerm(
-    #     func=mdp.feet_orientation_contact,
-    #     weight=-0.4,
-    #     params={
-    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
-    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
-    #     },
-    # )
+    feet_flat_ori = RewTerm(
+        func=mdp.feet_orientation_contact,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
+        },
+    )
     feet_at_plane = RewTerm(
         func=mdp.feet_at_plane,
         weight=-0.1,
