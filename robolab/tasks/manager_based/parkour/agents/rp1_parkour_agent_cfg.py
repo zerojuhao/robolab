@@ -13,7 +13,7 @@ class RslRlPpoEncoderMoEActorCriticCfg:
     class_name: str = "EncoderMoEActorCritic"
     init_noise_std: float = 1.0
     noise_std_type: str = "log"
-    num_moe_experts: int = 5
+    num_moe_experts: int = 10
     moe_gate_hidden_dims: list[int] = []
     actor_hidden_dims: list[int] = [256, 128, 64]
     critic_hidden_dims: list[int] = [256, 128, 64]

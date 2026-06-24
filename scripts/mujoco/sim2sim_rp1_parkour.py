@@ -91,8 +91,8 @@ _CHASE_BACK_M = 2.0
 _CHASE_UP_M = 0.6
 _CHASE_LOOK_AHEAD_M = 0.8
 _CHASE_BODY_NAME = "base_link"
-_SPEED_LIMIT_X = 0.8
-_SPEED_LIMIT_Y = 0.8
+_SPEED_LIMIT_X = 0.6
+_SPEED_LIMIT_Y = 0.6
 _SPEED_LIMIT_Z = 1.0
 
 
@@ -1193,7 +1193,7 @@ def run_mujoco_onnx(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
-        "exported"
+        "rp1e0"
     )
     parser.add_argument(
         "--depth_encoder",

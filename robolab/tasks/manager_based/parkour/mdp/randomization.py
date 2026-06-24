@@ -217,3 +217,63 @@ def randomize_camera_offsets(
         env_ids=env_ids,
         convention=sensor.cfg.offset.convention,
     )
+
+def push_by_setting_velocity_per_terrain(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    velocity_range: dict[str, tuple[float, float]],
+    terrain_velocity_ranges: dict[str, dict[str, tuple[float, float]]] | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Push robot with per-sub-terrain velocity sampling ranges (world frame)."""
+    if len(env_ids) == 0:
+        return
+
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    device = asset.device
+    vel_axes = ("x", "y", "z", "roll", "pitch", "yaw")
+
+    # --- build / reuse lookup table: (num_sub_terrains, 6, 2) ---
+    cache_key = (id(velocity_range), id(terrain_velocity_ranges))
+    if getattr(env, "_push_vel_range_cache_key", None) != cache_key:
+        terrain = env.scene.terrain
+        sub_names = list(terrain.cfg.terrain_generator.sub_terrains.keys())
+        num_sub = len(sub_names)
+        table = torch.zeros(num_sub, 6, 2, device=device, dtype=torch.float32)
+
+        for s, name in enumerate(sub_names):
+            override = None
+            if terrain_velocity_ranges:
+                if name in terrain_velocity_ranges:
+                    override = terrain_velocity_ranges[name]
+                else:
+                    best_key = None
+                    for key in terrain_velocity_ranges:
+                        if key in name and (best_key is None or len(key) > len(best_key)):
+                            best_key = key
+                    if best_key is not None:
+                        override = terrain_velocity_ranges[best_key]
+            for j, axis in enumerate(vel_axes):
+                lo, hi = (override or {}).get(axis, velocity_range.get(axis, (0.0, 0.0)))
+                table[s, j, 0] = lo
+                table[s, j, 1] = hi
+
+        env._push_vel_range_table = table
+        env._push_vel_range_cache_key = cache_key
+
+    table = env._push_vel_range_table  # (S, 6, 2)
+
+    # --- vectorized per-env lookup ---
+    terrain = env.scene.terrain
+    terrain_gen = terrain.terrain_generator
+    sub_idx = terrain_gen.get_subterrain_indices(
+        terrain.terrain_levels[env_ids],
+        terrain.terrain_types[env_ids],
+        device=device,
+    )
+    ranges = table[sub_idx]          # (N, 6, 2)
+    mins, maxs = ranges[..., 0], ranges[..., 1]
+
+    vel_w = asset.data.root_vel_w[env_ids]
+    add_vel = math_utils.sample_uniform(mins, maxs, vel_w.shape, device=device)
+    asset.write_root_velocity_to_sim(vel_w + add_vel, env_ids=env_ids)

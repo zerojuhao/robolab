@@ -471,7 +471,6 @@ class CommandsCfg:
             "pyramid_stairs_inv_32": {"lin_vel_x": (0.4, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
             "pyramid_stairs_inv_30": {"lin_vel_x": (0.4, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
             "pyramid_stairs_inv_28": {"lin_vel_x": (0.4, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "threshold_bars": {"lin_vel_x": (0.4, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
             "hf_pyramid_slope_inv": {"lin_vel_x": (0.4, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
         },
         only_positive_lin_vel_x=True,
@@ -500,6 +499,8 @@ class ParkourRewardsCfg(MultiRewardCfg):
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-5.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
     # rpo_thigh_yaw_joint_sign_penalty = RewTerm(func=mdp.rpo_thigh_yaw_joint_sign_penalty, weight=-10.0)
+    rp1_hip_yaw_inward_sym_penalty = RewTerm(func=mdp.rp1_hip_yaw_inward_sym_penalty, weight=-10.0)
+
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
         func=mdp.volume_points_penetration_feet,
@@ -583,14 +584,14 @@ class ParkourRewardsCfg(MultiRewardCfg):
         weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="waist_yaw_link")},
     )
-    feet_flat_ori = RewTerm(
-        func=mdp.feet_orientation_contact,
-        weight=-0.4,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
-        },
-    )
+    # feet_flat_ori = RewTerm(
+    #     func=mdp.feet_orientation_contact,
+    #     weight=-0.4,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
+    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
+    #     },
+    # )
     feet_at_plane = RewTerm(
         func=mdp.feet_at_plane,
         weight=-0.1,
@@ -816,6 +817,26 @@ class EventCfg:
         },
     )
     
+    # push_robot = EventTerm(
+    #     func=mdp.push_by_setting_velocity,
+    #     mode="interval",
+    #     interval_range_s=(5.0, 10.0),
+    #     params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)}},
+    # )
+    
+    # push_robot = EventTerm(
+    #     func=mdp.push_by_setting_velocity_per_terrain,
+    #     mode="interval",
+    #     interval_range_s=(5.0, 10.0),
+    #     params={
+    #         "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
+    #         "terrain_velocity_ranges": {
+    #             "pyramid_stairs": {"x": (0.0, 0.5)},
+    #             "threshold_bars": {"x": (0.0, 0.5)},
+    #         },
+    #     },
+    # )
+
 @configclass
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
@@ -835,7 +856,7 @@ class CurriculumCfg:
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.03,
+            "step_size": 0.05,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
@@ -846,7 +867,7 @@ class CurriculumCfg:
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.03,
+            "step_size": 0.05,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -857,7 +878,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.03,
+            "step_size": 0.05,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -868,7 +889,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.03,
+            "step_size": 0.05,
         },
     )
 

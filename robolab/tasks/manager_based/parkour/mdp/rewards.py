@@ -104,6 +104,45 @@ def rpo_thigh_yaw_joint_sign_penalty(
     right_thigh_yaw_penalty = torch.where(asset.data.joint_pos[:, right_thigh_yaw_joint_index] < 0.0, -asset.data.joint_pos[:, right_thigh_yaw_joint_index], 0.0)
     return left_thigh_yaw_penalty + right_thigh_yaw_penalty
 
+
+def rp1_hip_yaw_inward_sym_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_velocity",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize symmetric pigeon-toe hip yaw during straight walking.
+
+    Only active when linear velocity command is large and angular velocity
+    command is small (straight walking regime). Penalizes simultaneous inward
+    rotation: left_hip_yaw > 0 and right_hip_yaw < 0.
+
+    Sign convention (RP1 URDF, axis 0 0 -1):
+        inward (内八字): left > 0, right < 0
+        outward (外八):  left < 0, right > 0
+    """
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    lin_cmd = torch.norm(cmd[:, :2], dim=1)
+    ang_cmd = torch.abs(cmd[:, 2])
+
+    # 仅在直线行走时生效，避免压制原地/走弧转向
+    gate = (lin_cmd > 0.1) & (ang_cmd < 0.1)
+
+    left_idx = asset.joint_names.index("left_hip_yaw_joint")
+    right_idx = asset.joint_names.index("right_hip_yaw_joint")
+    left_yaw = asset.data.joint_pos[:, left_idx]
+    right_yaw = asset.data.joint_pos[:, right_idx]
+
+    # 左腿内收：left_yaw > inward_thresh
+    left_inward = torch.relu(left_yaw - 0.00)
+    # 右腿内收：right_yaw < -inward_thresh
+    right_inward = torch.relu(-right_yaw - 0.00)
+    # 任一侧内收都罚；两腿都内收则罚更重
+    inward_penalty = left_inward + right_inward
+
+    return gate.float() * inward_penalty
+
+    
 def body_distance_y(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), min: float = 0.2, max: float = 0.5
 ) -> torch.Tensor:
@@ -387,7 +426,7 @@ def volume_points_penetration_feet(
             w_toe_heavy = stairs_weight_min + weight_span * x_frac
             w_heel_heavy = stairs_weight_max - weight_span * x_frac
             w_mid_heavy = stairs_weight_min + weight_span * (1.0 - torch.abs(2.0 * x_frac - 1.0))
-
+            
             env_w = w_mid_heavy.unsqueeze(0).repeat(num_envs, 1)
             if mask_up.any():
                 env_w[mask_up] = w_toe_heavy.unsqueeze(0)
@@ -493,3 +532,31 @@ def applied_torque_limits_by_ratio(
     out_of_limits_err = torch.sum(torch.square(out_of_limits), dim=-1)  # (num_envs,)
 
     return out_of_limits_err
+
+def feet_air_time_positive_biped(
+    env: ManagerBasedRLEnv,
+    command_name: str, 
+    threshold: float, 
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ) -> torch.Tensor:
+    """Reward long steps taken by the feet for bipeds.
+
+    This function rewards the agent for taking steps up to a specified threshold and also keep one foot at
+    a time in the air.
+
+    If the commands are small (i.e. the agent is not supposed to take a step), then the reward is zero.
+    """
+    asset: Articulation = env.scene["robot"]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    # compute the reward
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    in_mode_time = torch.where(in_contact, contact_time, air_time)
+    single_stance = torch.sum(in_contact.int(), dim=1) == 1
+    reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
+    reward = torch.clamp(reward, max=threshold)
+    # no reward for zero command
+    reward *= torch.norm(env.command_manager.get_command(command_name)[:, :3], dim=1) > 0.1
+    return reward
