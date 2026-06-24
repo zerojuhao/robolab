@@ -155,7 +155,7 @@ class SceneCfg(InteractiveSceneCfg):
         offset=NoisyGroupedRayCasterCameraCfg.OffsetCfg(
             # RP1 D435i camera offset
             pos=(
-                0.9175,
+                0.09175,
                 0.011,
                 0.3982,
             ),
@@ -817,25 +817,18 @@ class EventCfg:
         },
     )
     
-    # push_robot = EventTerm(
-    #     func=mdp.push_by_setting_velocity,
-    #     mode="interval",
-    #     interval_range_s=(5.0, 10.0),
-    #     params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)}},
-    # )
-    
-    # push_robot = EventTerm(
-    #     func=mdp.push_by_setting_velocity_per_terrain,
-    #     mode="interval",
-    #     interval_range_s=(5.0, 10.0),
-    #     params={
-    #         "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
-    #         "terrain_velocity_ranges": {
-    #             "pyramid_stairs": {"x": (0.0, 0.5)},
-    #             "threshold_bars": {"x": (0.0, 0.5)},
-    #         },
-    #     },
-    # )
+    push_robot = EventTerm(
+        func=mdp.push_by_setting_velocity_per_terrain,
+        mode="interval",
+        interval_range_s=(5.0, 10.0),
+        params={
+            "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
+            "terrain_velocity_ranges": {
+                "pyramid_stairs": {"x": (0.0, 0.5)},
+                "threshold_bars": {"x": (0.0, 0.5)},
+            },
+        },
+    )
 
 @configclass
 class CurriculumCfg:

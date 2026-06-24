@@ -427,6 +427,10 @@ def volume_points_penetration_feet(
             w_heel_heavy = stairs_weight_max - weight_span * x_frac
             w_mid_heavy = stairs_weight_min + weight_span * (1.0 - torch.abs(2.0 * x_frac - 1.0))
             
+            w_toe_heavy = 2 * w_toe_heavy ** 2
+            w_heel_heavy = 2 * w_heel_heavy ** 2
+            w_mid_heavy = 2 * w_mid_heavy ** 2
+            
             env_w = w_mid_heavy.unsqueeze(0).repeat(num_envs, 1)
             if mask_up.any():
                 env_w[mask_up] = w_toe_heavy.unsqueeze(0)

@@ -62,7 +62,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         self.scene.robot = RP1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.feet_volume_points.points_generator = FEET_VOLUME_POINTS_GRID
         self.scene.knee_volume_points.points_generator = KNEE_VOLUME_POINTS_GRID
-        self.scene.camera.offset.pos = (0.09175, 0.01, 0.3982)
+        self.scene.camera.offset.pos = (0.09175, 0.011, 0.3982)
         self.scene.camera.offset.rot = (0.92388, 0.0, 0.38268, 0.0)
         self.scene.camera.mesh_prim_paths.extend(get_link_prim_targets(PR1_LINKS))
         self.motion_data.motion_dataset.motion_data_dir = os.path.join(
