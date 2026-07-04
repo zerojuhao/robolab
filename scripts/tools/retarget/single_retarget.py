@@ -107,26 +107,26 @@ parser = argparse.ArgumentParser(description="Visualization of retargeted data."
 parser.add_argument(
     "--robot", 
     type=str,
-    default="rpo",
-    choices=["rpo"],
+    default="rp1_24dof",
+    choices=["rpo", "rp1", "rp1_24dof"],
     help="The robot name to be used.",
 )
 parser.add_argument(
     "--input_file",
     type=str,
-    default="source/legged_lab/legged_lab/data/MotionData/ACCAD/mixed_walk_run_lab/xiaobu.pkl",
+    default=None,
     help="Path to the input GMR motion file (pickle format).",
 )
 parser.add_argument(
     "--output_file",
     type=str,
-    default="source/legged_lab/legged_lab/data/MotionData/ACCAD/mixed_walk_run_lab/xiaobu.pkl",
+    default=None,
     help="Path to save the converted motion data (pickle format).",
 )
 parser.add_argument(
     "--config_file",
     type=str,
-    default="scripts/tools/config/rpo.yaml",
+    default="robolab/scripts/tools/retarget/config/rp1_24dof.yaml",
     help="Path to YAML config containing gmr_dof_names, lab_dof_names",
 )
 parser.add_argument(
@@ -176,6 +176,8 @@ from isaaclab.scene import InteractiveScene
 ##
 if args_cli.robot == "rpo":
     from robolab.assets.robots.roboparty import RPO_CFG as ROBOT_CFG
+elif args_cli.robot == "rp1_24dof":
+    from robolab.assets.robots.roboparty import RP1_3_CFG as ROBOT_CFG
 else:
     raise ValueError(f"Robot {args_cli.robot} not supported.")
 

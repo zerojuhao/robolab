@@ -96,51 +96,47 @@ def rpo_thigh_yaw_joint_sign_penalty(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalize right thigh yaw below zero and left thigh yaw above zero."""
+    """Penalizes inward rotation: left_thigh_yaw > 0 and right_thigh_yaw < 0.
+
+    Sign convention (RPO URDF):
+        inward: left > 0, right < 0
+        outward:  left < 0, right > 0
+    """
     asset = env.scene[asset_cfg.name]
-    right_thigh_yaw_joint_index = asset.joint_names.index("right_thigh_yaw_joint")
-    left_thigh_yaw_joint_index = asset.joint_names.index("left_thigh_yaw_joint")
-    left_thigh_yaw_penalty = torch.where(asset.data.joint_pos[:, left_thigh_yaw_joint_index] > 0.0, asset.data.joint_pos[:, left_thigh_yaw_joint_index], 0.0)
-    right_thigh_yaw_penalty = torch.where(asset.data.joint_pos[:, right_thigh_yaw_joint_index] < 0.0, -asset.data.joint_pos[:, right_thigh_yaw_joint_index], 0.0)
-    return left_thigh_yaw_penalty + right_thigh_yaw_penalty
+    left_idx = asset.joint_names.index("left_thigh_yaw_joint")
+    right_idx = asset.joint_names.index("right_thigh_yaw_joint")
+    left_yaw = asset.data.joint_pos[:, left_idx]
+    right_yaw = asset.data.joint_pos[:, right_idx]
+    
+    left_inward = torch.relu(left_yaw - 0.00)
+    right_inward = torch.relu(-right_yaw - 0.00)
+    inward_penalty = left_inward + right_inward
+
+    return inward_penalty
 
 
 def rp1_hip_yaw_inward_sym_penalty(
     env: ManagerBasedRLEnv,
-    command_name: str = "base_velocity",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalize symmetric pigeon-toe hip yaw during straight walking.
+    """Penalizes inward rotation: left_thigh_yaw > 0 and right_thigh_yaw < 0.
 
-    Only active when linear velocity command is large and angular velocity
-    command is small (straight walking regime). Penalizes simultaneous inward
-    rotation: left_hip_yaw > 0 and right_hip_yaw < 0.
-
-    Sign convention (RP1 URDF, axis 0 0 -1):
-        inward (内八字): left > 0, right < 0
-        outward (外八):  left < 0, right > 0
+    Sign convention (RP1 URDF):
+        inward: left > 0, right < 0
+        outward:  left < 0, right > 0
     """
     asset = env.scene[asset_cfg.name]
-    cmd = env.command_manager.get_command(command_name)
-    lin_cmd = torch.norm(cmd[:, :2], dim=1)
-    ang_cmd = torch.abs(cmd[:, 2])
-
-    # 仅在直线行走时生效，避免压制原地/走弧转向
-    gate = (lin_cmd > 0.1) & (ang_cmd < 0.1)
 
     left_idx = asset.joint_names.index("left_hip_yaw_joint")
     right_idx = asset.joint_names.index("right_hip_yaw_joint")
     left_yaw = asset.data.joint_pos[:, left_idx]
     right_yaw = asset.data.joint_pos[:, right_idx]
 
-    # 左腿内收：left_yaw > inward_thresh
     left_inward = torch.relu(left_yaw - 0.00)
-    # 右腿内收：right_yaw < -inward_thresh
     right_inward = torch.relu(-right_yaw - 0.00)
-    # 任一侧内收都罚；两腿都内收则罚更重
     inward_penalty = left_inward + right_inward
 
-    return gate.float() * inward_penalty
+    return inward_penalty
 
     
 def body_distance_y(
@@ -193,7 +189,7 @@ def feet_close_xy_gauss(
     feet_distance_y = torch.abs(left_foot_robot_frame[:, 1] - right_foot_robot_frame[:, 1])
 
     # Return continuous penalty using exponential decay
-    return torch.exp(-torch.clamp(threshold - feet_distance_y, min=0.0) / std**2) - 1
+    return 1 - torch.exp(-torch.clamp(threshold - feet_distance_y, min=0.0) / std**2)
 
 
 def sound_suppression_acc_per_foot(
@@ -217,17 +213,46 @@ def heading_error(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
     return ang_vel_cmd
 
 
+# def dont_wait(
+#     env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+# ) -> torch.Tensor:
+#     """Penalize standing still when there is a forward velocity command."""
+#     # extract the used quantities (to enable type-hinting)
+#     asset: RigidObject = env.scene[asset_cfg.name]
+#     # compute the error
+#     lin_vel_cmd_x = env.command_manager.get_command(command_name)[:, 0]
+#     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
+#     return (lin_vel_cmd_x > 0.3) * ((lin_vel_x < 0.15).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+
 def dont_wait(
     env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    """Penalize standing still when there is a forward velocity command."""
-    # extract the used quantities (to enable type-hinting)
+    """Penalize moving too slowly when there is a velocity command in any direction."""
     asset: RigidObject = env.scene[asset_cfg.name]
-    # compute the error
-    lin_vel_cmd_x = env.command_manager.get_command(command_name)[:, 0]
-    lin_vel_x = asset.data.root_lin_vel_b[:, 0]
-    return (lin_vel_cmd_x > 0.3) * ((lin_vel_x < 0.15).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
 
+    cmd = env.command_manager.get_command(command_name)
+    lin_vel_cmd = cmd[:, :2]
+    ang_vel_cmd_z = cmd[:, 2]
+
+    lin_vel = asset.data.root_lin_vel_b[:, :2]
+    ang_vel_z = asset.data.root_ang_vel_b[:, 2]
+
+    lin_vel_along_cmd = lin_vel * torch.sign(lin_vel_cmd)
+    ang_vel_along_cmd = ang_vel_z * torch.sign(ang_vel_cmd_z)
+
+    lin_penalty = (
+        (lin_vel_along_cmd < 0.15).float()
+        + (lin_vel_along_cmd < 0.0).float()
+        + (lin_vel_along_cmd < -0.15).float()
+    ) * (torch.abs(lin_vel_cmd) > 0.3).float()
+
+    ang_penalty = (
+        (ang_vel_along_cmd < 0.15).float()
+        + (ang_vel_along_cmd < 0.0).float()
+        + (ang_vel_along_cmd < -0.15).float()
+    ) * (torch.abs(ang_vel_cmd_z) > 0.3).float()
+
+    return lin_penalty.sum(dim=1) + ang_penalty
 
 def feet_orientation_contact(
     env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
@@ -478,7 +503,7 @@ def contact_slide(
     env,
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    ang_vel_penalty: bool = False,
+    ang_vel_penalty: bool = True,
     threshold: float = 0.1,
 ) -> torch.Tensor:
     """Penalize body sliding.
@@ -499,6 +524,34 @@ def contact_slide(
     reward = torch.sum(body_vel.norm(dim=-1) * contacts, dim=1)
     if ang_vel_penalty:
         reward = reward + torch.sum(body_ang_vel.norm(dim=-1) * contacts, dim=1)
+    return reward
+
+def feet_slide(
+    env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Penalize feet sliding.
+
+    This function penalizes the agent for sliding its feet on the ground. The reward is computed as the
+    norm of the linear velocity of the feet multiplied by a binary contact sensor. This ensures that the
+    agent is penalized only when the feet are in contact with the ground.
+    """
+    # Penalize feet sliding
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contacts = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :].norm(dim=-1).max(dim=1)[0] > 1.0
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    cur_footvel_translated = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :] - asset.data.root_lin_vel_w[
+        :, :
+    ].unsqueeze(1)
+    footvel_in_body_frame = torch.zeros(env.num_envs, len(asset_cfg.body_ids), 3, device=env.device)
+    for i in range(len(asset_cfg.body_ids)):
+        footvel_in_body_frame[:, i, :] = math_utils.quat_apply_inverse(
+            asset.data.root_quat_w, cur_footvel_translated[:, i, :]
+        )
+    foot_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(
+        env.num_envs, -1
+    )
+    reward = torch.sum(foot_leteral_vel * contacts, dim=1)
     return reward
 
 def motors_power_square(

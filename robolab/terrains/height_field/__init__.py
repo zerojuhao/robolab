@@ -9,6 +9,8 @@ from .hf_terrains_cfg import (
     PerlinPlaneTerrainCfg,
     PerlinPyramidSlopedTerrainCfg,
     PerlinPyramidStairsTerrainCfg,
+    PerlinInvertedTrapezoidStairsTerrainCfg,
+    PerlinTrapezoidStairsTerrainCfg,
     PerlinSlopeTerrainCfg,
     PerlinSquareGapTerrainCfg,
     PerlinStairsDownUpTerrainCfg,

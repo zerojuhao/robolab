@@ -71,6 +71,14 @@ class PoseVelocityCommand(CommandTerm):
         self.random_lin_vel_y = torch.zeros(self.num_envs, device=self.device)
         self.random_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
 
+        # default random-velocity range (used as fallback for terrains without a dedicated entry below)
+        self.random_lin_vel_x_range[:, 0] = self.cfg.ranges.lin_vel_x[0]
+        self.random_lin_vel_x_range[:, 1] = self.cfg.ranges.lin_vel_x[1]
+        self.random_lin_vel_y_range[:, 0] = self.cfg.ranges.lin_vel_y[0]
+        self.random_lin_vel_y_range[:, 1] = self.cfg.ranges.lin_vel_y[1]
+        self.random_ang_vel_z_range[:, 0] = self.cfg.ranges.ang_vel_z[0]
+        self.random_ang_vel_z_range[:, 1] = self.cfg.ranges.ang_vel_z[1]
+
         if self.cfg.velocity_ranges is not None:
             terrain_generator_cfg = self.terrain.cfg.terrain_generator
             proportions = np.array([sub_cfg.proportion for sub_cfg in terrain_generator_cfg.sub_terrains.values()])
@@ -103,16 +111,18 @@ class PoseVelocityCommand(CommandTerm):
                 for key in self.cfg.random_velocity_terrain:
                     terrain_type_index = sub_terrains_names.index(key)
                     type_indices = np.where(sub_indices == terrain_type_index)[0]
+                    # use the terrain-specific velocity range (falls back to the global `ranges` if not provided)
+                    value = self.cfg.velocity_ranges.get(key)
                     for type_indice in type_indices:
                         env_indices = torch.where(self.terrain.terrain_types == type_indice)[0]
                         self.random_velocity_indices[env_indices] = True
-
-        self.random_lin_vel_x_range[:, 0] = self.cfg.ranges.lin_vel_x[0]
-        self.random_lin_vel_x_range[:, 1] = self.cfg.ranges.lin_vel_x[1]
-        self.random_lin_vel_y_range[:, 0] = self.cfg.ranges.lin_vel_y[0]
-        self.random_lin_vel_y_range[:, 1] = self.cfg.ranges.lin_vel_y[1]
-        self.random_ang_vel_z_range[:, 0] = self.cfg.ranges.ang_vel_z[0]
-        self.random_ang_vel_z_range[:, 1] = self.cfg.ranges.ang_vel_z[1]
+                        if value is not None:
+                            self.random_lin_vel_x_range[env_indices, 0] = value["lin_vel_x"][0]
+                            self.random_lin_vel_x_range[env_indices, 1] = value["lin_vel_x"][1]
+                            self.random_lin_vel_y_range[env_indices, 0] = value["lin_vel_y"][0]
+                            self.random_lin_vel_y_range[env_indices, 1] = value["lin_vel_y"][1]
+                            self.random_ang_vel_z_range[env_indices, 0] = value["ang_vel_z"][0]
+                            self.random_ang_vel_z_range[env_indices, 1] = value["ang_vel_z"][1]
 
         # obtain the valid targets from the terrain
         if "target" not in self.terrain.flat_patches:
@@ -229,6 +239,8 @@ class PoseVelocityCommand(CommandTerm):
                 self.random_ang_vel_z_range[random_velocity_env_ids, 1]
                 - self.random_ang_vel_z_range[random_velocity_env_ids, 0]
             )
+            self.random_lin_vel_x *= torch.abs(self.random_lin_vel_x) > 0.2
+            self.random_lin_vel_y *= torch.abs(self.random_lin_vel_y) > 0.2
             self.random_ang_vel_z *= torch.abs(self.random_ang_vel_z) > 0.5
 
     def _update_command(self):
@@ -293,13 +305,15 @@ class PoseVelocityCommand(CommandTerm):
             (torch.norm(self.vel_command_b[:, :2], dim=1) > self.cfg.lin_vel_threshold).float().unsqueeze(-1)
         )
         self.vel_command_b[:, 2] *= (torch.abs(self.vel_command_b[:, 2]) > self.cfg.ang_vel_threshold).float()
-        standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
-        self.vel_command_b[standing_env_ids, :] = 0.0
 
         random_velocity_env_ids = self.random_velocity_indices.nonzero(as_tuple=False).flatten()
         self.vel_command_b[random_velocity_env_ids, 0] = self.random_lin_vel_x[random_velocity_env_ids]
         self.vel_command_b[random_velocity_env_ids, 1] = self.random_lin_vel_y[random_velocity_env_ids]
         self.vel_command_b[random_velocity_env_ids, 2] = self.random_ang_vel_z[random_velocity_env_ids]
+
+        # standing envs must stay zero even if they also fall on a random-velocity terrain.
+        standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
+        self.vel_command_b[standing_env_ids, :] = 0.0
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first tome

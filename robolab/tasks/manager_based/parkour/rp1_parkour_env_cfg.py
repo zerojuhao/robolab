@@ -5,7 +5,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from robolab import ROBOLAB_ROOT_DIR
-from robolab.assets.robots.roboparty import PR1_LINKS, RP1_CFG
+from robolab.assets.robots.roboparty import PR1_LINKS, RP1_3_CFG
 from robolab.sensors import get_link_prim_targets
 from robolab.tasks.manager_based.parkour.parkour_env_cfg import ROUGH_TERRAINS_CFG, ParkourEnvCfg
 from robolab.sensors import Grid3dPointsGeneratorCfg, NoisyGroupedRayCasterCameraCfg, VolumePointsCfg
@@ -20,7 +20,7 @@ KEY_BODY_NAMES = [
     "right_wrist_roll_link",
 ]
 
-RP1_CFG.init_state.pos = (0.0, 0.0, 0.85)
+RP1_3_CFG.init_state.pos = (0.0, 0.0, 0.85)
 AMP_NUM_STEPS = 3
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
@@ -59,11 +59,12 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         super().__post_init__()
         # Scene
         self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG
-        self.scene.robot = RP1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot = RP1_3_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.feet_volume_points.points_generator = FEET_VOLUME_POINTS_GRID
         self.scene.knee_volume_points.points_generator = KNEE_VOLUME_POINTS_GRID
+        self.scene.camera.prim_path = "{ENV_REGEX_NS}/Robot/waist_yaw_link"
         self.scene.camera.offset.pos = (0.09175, 0.011, 0.3982)
-        self.scene.camera.offset.rot = (0.92388, 0.0, 0.38268, 0.0)
+        self.scene.camera.offset.rot = (0.866, 0.0, 0.5, 0.0)
         self.scene.camera.mesh_prim_paths.extend(get_link_prim_targets(PR1_LINKS))
         self.motion_data.motion_dataset.motion_data_dir = os.path.join(
             ROBOLAB_ROOT_DIR, "data", "motions", "rp1_lab"
@@ -73,6 +74,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             "36_11": 1,
             "114_09": 1,
             "A1-_Stand_stageii": 1,
+            "B4_-_Stand_to_Walk_backwards_stageii": 1,
             "B9_-__Walk_turn_left_90_stageii": 1,
             "B10_-__Walk_turn_left_45_stageii": 1,
             "B13_-__Walk_turn_right_90_stageii": 1,
@@ -93,6 +95,17 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
                 preserve_order=True,
             )
         }
+
+        self.rewards.rewards.rpo_thigh_yaw_joint_sign_penalty = None
+        self.rewards.rewards.feet_close_xy_gauss.params["threshold"] = 0.20
+        self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint", "waist_.*_joint"])
+        self.rewards.rewards.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="waist_yaw_link")
+        self.rewards.rewards.pelvis_ang_vel_xy_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="waist_yaw_link")
+
+        self.terminations.base_contact.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_names=["waist_yaw_link"])
+
+        self.events.add_base_mass.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["base_link", "waist_yaw_link"])
+        self.events.randomize_rigid_body_com.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["base_link", "waist_yaw_link"])
 
 
 @configclass

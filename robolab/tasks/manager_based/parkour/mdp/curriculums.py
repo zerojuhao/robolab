@@ -84,8 +84,9 @@ def modify_rewards_weight(
             toward ``final_weight``.
         ang_vel_threshold: A tuple specifying the lower and upper threshold for the angular
             velocity tracking score (exponential kernel). Similar logic as ``lin_vel_threshold``.
-        step_size: Fractional step taken toward the target weight each time this curriculum
-            is triggered (0.02 = move 2% of the remaining gap).
+        step_size: Fraction of the total weight range ``(final_weight - init_weight)`` applied
+            as a fixed absolute step each time this curriculum is triggered
+            (0.05 = move 5% of the full range per update).
         group_name: Name of the reward group that contains ``term_name``. If ``None``, the
             first group is used (matches ``MultiRewardManager`` behavior).
 
@@ -112,9 +113,13 @@ def modify_rewards_weight(
     # move_up and move_down are boolean tensors aligned with env_ids
     move_up = move_up.to(dtype=current.dtype, device=current.device)
     move_down = move_down.to(dtype=current.dtype, device=current.device)
-    # per-env updates
-    current = current + (final_weight - current) * step_size * move_up
-    current = current + (init_weight - current) * step_size * move_down
+    # fixed absolute step: fraction of the full init->final range
+    abs_step = (final_weight - init_weight) * step_size
+    current = current + abs_step * move_up
+    current = current - abs_step * move_down
+    weight_min = min(init_weight, final_weight)
+    weight_max = max(init_weight, final_weight)
+    current = torch.clamp(current, weight_min, weight_max)
     # write back only for these envs
     env.reward_manager.set_term_weight_for_envs(term_name, env_idx, current)
 

@@ -25,9 +25,9 @@ def generate_wall(func: Callable) -> Callable:
             return meshes, origin
 
         mesh = meshes[0]
+        result_meshes = list(meshes)
         wall_height = cfg.wall_height
         wall_thickness = cfg.wall_thickness
-        result_meshes = [mesh]
 
         # Get mesh bounds
         bounds = mesh.bounds

@@ -13,7 +13,7 @@ class RslRlPpoEncoderMoEActorCriticCfg:
     class_name: str = "EncoderMoEActorCritic"
     init_noise_std: float = 1.0
     noise_std_type: str = "log"
-    num_moe_experts: int = 5
+    num_moe_experts: int = 4
     moe_gate_hidden_dims: list[int] = []
     actor_hidden_dims: list[int] = [256, 128, 64]
     critic_hidden_dims: list[int] = [256, 128, 64]
@@ -42,7 +42,7 @@ class RPOParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     class_name = "AMPRunner"
     num_steps_per_env = 24
     max_iterations = 30000
-    save_interval = 500
+    save_interval = 100
     experiment_name = "rpo_parkour"
     wandb_project = "rpo_parkour"
     obs_groups = {
@@ -59,7 +59,7 @@ class RPOParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         clip_param=0.2,
         entropy_coef=0.006,
         num_learning_epochs=5,
-        num_mini_batches=4,
+        num_mini_batches=8,
         learning_rate=1.0e-4,
         schedule="adaptive",
         gamma=0.99,
@@ -69,7 +69,7 @@ class RPOParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         symmetry_cfg=RslRlSymmetryCfg(
             use_data_augmentation=True,
             use_mirror_loss=True,
-            mirror_loss_coeff=0.15,
+            mirror_loss_coeff=0.2,
             data_augmentation_func=rpo.compute_symmetric_states
         ),
         amp_cfg=RslRlAmpCfg(

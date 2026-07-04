@@ -61,6 +61,22 @@ class PerlinInvertedPyramidStairsTerrainCfg(HfInvertedPyramidStairsTerrainCfg, W
 
 
 @configclass
+class PerlinTrapezoidStairsTerrainCfg(HfPyramidStairsTerrainCfg, WallTerrainCfgMixin):
+    """Trapezoid stairs along y-axis: only +y/-y faces have steps, full width along x."""
+
+    function = hf_terrains.perlin_trapezoid_stairs_terrain
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
+class PerlinInvertedTrapezoidStairsTerrainCfg(HfInvertedPyramidStairsTerrainCfg, WallTerrainCfgMixin):
+    """Inverted trapezoid stairs along y-axis."""
+
+    function = hf_terrains.perlin_trapezoid_stairs_terrain
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
 class PerlinInvertedPyramidStairsGroundAlignedTerrainCfg(HfInvertedPyramidStairsTerrainCfg, WallTerrainCfgMixin):
     """Alias of :class:`PerlinInvertedPyramidStairsTerrainCfg` (same defaults since align_min_height defaults to True on the parent)."""
     function = hf_terrains.perlin_pyramid_stairs_ground_aligned_terrain

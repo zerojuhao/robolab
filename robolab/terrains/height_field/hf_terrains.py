@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import scipy.interpolate as interpolate
+import trimesh
+import trimesh.transformations
 from typing import TYPE_CHECKING
 
-from isaaclab.terrains.height_field.utils import height_field_to_mesh
+from isaaclab.terrains.height_field.utils import convert_height_field_to_mesh, height_field_to_mesh
 
 from robolab.utils.perlin import generate_fractal_noise_2d
 
@@ -202,6 +206,161 @@ def perlin_pyramid_stairs_terrain(difficulty: float, cfg: hf_terrains_cfg.Perlin
 
     # round off the heights to the nearest vertical step
     return np.rint(hf_raw).astype(np.int16)
+
+
+@generate_wall
+def perlin_trapezoid_stairs_terrain(
+    difficulty: float, cfg: hf_terrains_cfg.PerlinTrapezoidStairsTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate trapezoid stairs along y and return mesh(es) with origin.
+
+    Only the +y and -y faces have stairs (full width along x). Viewed from the side (along x),
+    the profile is trapezoidal with a flat platform at the center.
+
+    Non-inverted: center platform is the highest point.
+    Inverted: center platform is the lowest point (z=0 after ground align); both y ends are higher.
+    Inverted terrains also get solid infill under the treads and rim heights extended into border.
+    """
+    if cfg.border_width > 0 and cfg.border_width < cfg.horizontal_scale:
+        raise ValueError(
+            f"The border width ({cfg.border_width}) must be greater than or equal to the"
+            f" horizontal scale ({cfg.horizontal_scale})."
+        )
+
+    hs = cfg.horizontal_scale
+    vs = cfg.vertical_scale
+    width_pixels = int(cfg.size[0] / hs) + 1
+    length_pixels = int(cfg.size[1] / hs) + 1
+    border_pixels = int(cfg.border_width / hs) + 1
+    sub_terrain_size = [
+        (width_pixels - 2 * border_pixels) * hs,
+        (length_pixels - 2 * border_pixels) * hs,
+    ]
+    terrain_size = copy.deepcopy(cfg.size)
+    cfg.size = tuple(sub_terrain_size)
+
+    step_height = cfg.step_height_range[0] + difficulty * (cfg.step_height_range[1] - cfg.step_height_range[0])
+    if cfg.inverted:
+        step_height *= -1
+    sub_width_px = int(cfg.size[0] / hs)
+    sub_length_px = int(cfg.size[1] / hs)
+    step_width_px = round(cfg.step_width / hs)
+    step_height_px = round(step_height / vs)
+    platform_width_px = round(cfg.platform_width / hs)
+
+    hf_raw = np.zeros((sub_width_px, sub_length_px))
+    current_step_height = 0
+    start_y, stop_y = 0, sub_length_px
+    while (stop_y - start_y) > platform_width_px:
+        start_y += step_width_px
+        stop_y -= step_width_px
+        current_step_height += step_height_px
+        hf_raw[:, start_y:stop_y] = current_step_height
+
+    if cfg.inverted:
+        rim_height = hf_raw[0, step_width_px]
+        hf_raw[:, :step_width_px] = rim_height
+        hf_raw[:, sub_length_px - step_width_px :] = rim_height
+        hf_raw = hf_raw - np.min(hf_raw)
+
+    z_base = np.rint(hf_raw).astype(np.int16)
+
+    if cfg.perlin_cfg is not None:
+        perlin_cfg = cfg.perlin_cfg
+        perlin_cfg.size = cfg.size
+        perlin_cfg.horizontal_scale = hs
+        perlin_cfg.vertical_scale = vs
+        perlin_cfg.slope_threshold = cfg.slope_threshold
+        hf_raw += generate_perlin_noise(difficulty, perlin_cfg)  # type: ignore[arg-type]
+
+    if cfg.inverted:
+        hf_raw = np.maximum(hf_raw, 0)
+
+    z_gen = np.rint(hf_raw).astype(np.int16)
+    cfg.size = terrain_size
+
+    heights = np.zeros((width_pixels, length_pixels), dtype=np.int16)
+    inner = slice(border_pixels, -border_pixels)
+    heights[inner, inner] = z_gen
+
+    if cfg.inverted:
+        y_inner = slice(border_pixels, -border_pixels)
+        x_inner = slice(border_pixels, -border_pixels)
+        for j in range(border_pixels):
+            heights[x_inner, j] = z_gen[:, 0]
+            heights[x_inner, -j - 1] = z_gen[:, -1]
+        for i in range(border_pixels):
+            heights[i, y_inner] = z_gen[0, :]
+            heights[-i - 1, y_inner] = z_gen[-1, :]
+        for i in range(border_pixels):
+            for j in range(border_pixels):
+                heights[i, j] = z_gen[0, 0]
+                heights[i, -j - 1] = z_gen[0, -1]
+                heights[-i - 1, j] = z_gen[-1, 0]
+                heights[-i - 1, -j - 1] = z_gen[-1, -1]
+
+    vertices, triangles = convert_height_field_to_mesh(heights, hs, vs, cfg.slope_threshold)
+    meshes: list[trimesh.Trimesh] = [trimesh.Trimesh(vertices=vertices, faces=triangles)]
+
+    if cfg.inverted:
+        heights_base = np.zeros_like(heights)
+        heights_base[inner, inner] = z_base
+        for j in range(border_pixels):
+            heights_base[x_inner, j] = z_base[:, 0]
+            heights_base[x_inner, -j - 1] = z_base[:, -1]
+        for i in range(border_pixels):
+            heights_base[i, y_inner] = z_base[0, :]
+            heights_base[-i - 1, y_inner] = z_base[-1, :]
+        for i in range(border_pixels):
+            for j in range(border_pixels):
+                heights_base[i, j] = z_base[0, 0]
+                heights_base[i, -j - 1] = z_base[0, -1]
+                heights_base[-i - 1, j] = z_base[-1, 0]
+                heights_base[-i - 1, -j - 1] = z_base[-1, -1]
+
+        heights_m = heights_base.astype(np.float64) * vs
+        for j in range(length_pixels - 1):
+            y0, y1 = j * hs, (j + 1) * hs
+            i = 0
+            while i < width_pixels - 1:
+                hz = float(
+                    max(
+                        heights_m[i, j],
+                        heights_m[i + 1, j],
+                        heights_m[i, j + 1],
+                        heights_m[i + 1, j + 1],
+                    )
+                )
+                if hz < 1e-6:
+                    i += 1
+                    continue
+                i_start = i
+                while i + 1 < width_pixels - 1:
+                    hz_next = float(
+                        max(
+                            heights_m[i + 1, j],
+                            heights_m[i + 2, j],
+                            heights_m[i + 1, j + 1],
+                            heights_m[i + 2, j + 1],
+                        )
+                    )
+                    if abs(hz_next - hz) > 1e-6:
+                        break
+                    i += 1
+                x0, x1 = i_start * hs, (i + 1) * hs
+                transform = trimesh.transformations.translation_matrix([0.5 * (x0 + x1), 0.5 * (y0 + y1), 0.5 * hz])
+                meshes.append(trimesh.creation.box(extents=[x1 - x0, y1 - y0, hz], transform=transform))
+                i += 1
+
+    x1 = int((cfg.size[0] * 0.5 - 1) / hs)
+    x2 = int((cfg.size[0] * 0.5 + 1) / hs)
+    y1 = int((cfg.size[1] * 0.5 - 1) / hs)
+    y2 = int((cfg.size[1] * 0.5 + 1) / hs)
+    center_heights = heights[x1:x2, y1:y2]
+    origin_z = (np.min if cfg.inverted else np.max)(center_heights) * vs
+    origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], origin_z])
+    return meshes, origin
+
 
 @generate_wall
 @height_field_to_mesh
