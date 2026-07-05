@@ -75,6 +75,7 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
             "114_08": 1,
             "114_09": 1,
             "A1-_Stand_stageii": 1,
+            "B4_-_Stand_to_Walk_backwards_stageii": 1,
             "B9_-__Walk_turn_left_90_stageii": 1,
             "B10_-__Walk_turn_left_45_stageii": 1,
             "B13_-__Walk_turn_right_90_stageii": 1,
@@ -100,6 +101,7 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
         self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_arm_.*_joint", ".*_elbow.*_joint", "torso_joint"])
         self.rewards.rewards.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="torso_link")
         self.rewards.rewards.pelvis_ang_vel_xy_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="torso_link")
+        self.rewards.rewards.pelvis_ang_vel_xy_l2.weight = -0.01
 
         self.terminations.base_contact.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_names=["torso_link"])
         

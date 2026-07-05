@@ -91,9 +91,10 @@ _CHASE_BACK_M = 2.0
 _CHASE_UP_M = 0.6
 _CHASE_LOOK_AHEAD_M = 0.8
 _CHASE_BODY_NAME = "base_link"
-_SPEED_LIMIT_X = 0.6
-_SPEED_LIMIT_Y = 0.6
-_SPEED_LIMIT_Z = 1.0
+# Deployment velocity limits (min, max) per axis: vx, vy, dyaw.
+_CLIP_CMD_X = (-0.6, 0.8)
+_CLIP_CMD_Y = (-0.6, 0.6)
+_CLIP_CMD_Z = (-1.5, 1.5)
 
 
 class CompactOverlayMujocoViewer(mujoco_viewer.MujocoViewer):
@@ -288,10 +289,11 @@ class cmd:
     _MOVE_KEYS: ClassVar[frozenset[str]] = frozenset({"8", "2", "4", "6", "7", "9"})
     _pressed: ClassVar[set[str]] = set()
 
-    # Magnitude while the corresponding key is held (opposing keys cancel).
-    hold_vx = _SPEED_LIMIT_X
-    hold_vy = _SPEED_LIMIT_Y
-    hold_dyaw = _SPEED_LIMIT_Z
+    # Magnitude while the corresponding key is held (opposing keys cancel); matches deployment clip limits.
+    hold_vx_forward = float(_CLIP_CMD_X[1])
+    hold_vx_back = float(-_CLIP_CMD_X[0])
+    hold_vy = float(_CLIP_CMD_Y[1])
+    hold_dyaw = float(_CLIP_CMD_Z[1])
 
     # Max |d(command)/dt| when moving toward keyboard target (linear ramp; units/s).
     ramp_vx_per_s = 2.0
@@ -321,9 +323,9 @@ class cmd:
         vx = vy = dyaw = 0.0
         p = cls._pressed
         if "8" in p:
-            vx += cls.hold_vx
+            vx += cls.hold_vx_forward
         if "2" in p:
-            vx -= cls.hold_vx
+            vx -= cls.hold_vx_back
         if "4" in p:
             vy += cls.hold_vy
         if "6" in p:
@@ -341,7 +343,11 @@ class cmd:
         cls._smooth_vx = cls._step_axis(cls._smooth_vx, tgt_vx, cls.ramp_vx_per_s, dt_policy)
         cls._smooth_vy = cls._step_axis(cls._smooth_vy, tgt_vy, cls.ramp_vy_per_s, dt_policy)
         cls._smooth_dyaw = cls._step_axis(cls._smooth_dyaw, tgt_dyaw, cls.ramp_dyaw_per_s, dt_policy)
-        return cls._smooth_vx, cls._smooth_vy, cls._smooth_dyaw
+        vx = float(np.clip(cls._smooth_vx, *_CLIP_CMD_X))
+        vy = float(np.clip(cls._smooth_vy, *_CLIP_CMD_Y))
+        dyaw = float(np.clip(cls._smooth_dyaw, *_CLIP_CMD_Z))
+        cls._smooth_vx, cls._smooth_vy, cls._smooth_dyaw = vx, vy, dyaw
+        return vx, vy, dyaw
 
     @classmethod
     def toggle_camera_follow(cls) -> None:
@@ -369,7 +375,7 @@ class cmd:
 def print_controls_guide() -> None:
     """Print keyboard controls once at startup (always shown, independent of ``quiet``)."""
     rows: list[tuple[str, str, str]] = [
-        ("8 / 2", "Forward / Back", f"Target vx ±{cmd.hold_vx} m/s; ramps down on release"),
+        ("8 / 2", "Forward / Back", f"Target vx +{cmd.hold_vx_forward}/-{cmd.hold_vx_back} m/s; ramps down on release"),
         ("7 / 9", "Turn left / right", f"Target dyaw ±{cmd.hold_dyaw} rad/s; ramps down on release"),
         (
             "R",
@@ -1193,7 +1199,7 @@ def run_mujoco_onnx(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
-        "rp1e0"
+        "rp1et"
     )
     parser.add_argument(
         "--depth_encoder",
@@ -1234,7 +1240,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    mjcf_dir = f"{ISAAC_DATA_DIR}/robots/roboparty/rp1/mjcf"
+    mjcf_dir = f"{ISAAC_DATA_DIR}/robots/roboparty/rp1.3/mjcf"
     scene_xml = {
         "stairs": f"{mjcf_dir}/rp1_stairs.xml",
         "terrain": f"{mjcf_dir}/rp1_rough.xml",
@@ -1254,34 +1260,34 @@ if __name__ == "__main__":
             depth_camera_body = "waist_yaw_link"
 
         class robot_config:
-            # PD gains in gmr/URDF (MuJoCo actuator) order; see rp1.yaml lab_dof_names -> gmr_dof_names.
+            # PD gains in URDF order (gmr_dof_names); matches rp1_deploy robot.yaml via urdf2motor.
             kps = np.array(
                 [
-                    148.891, 148.891, 148.891, 198.521, 40.193, 40.193,
-                    148.891, 148.891, 148.891, 198.521, 40.193, 40.193,
-                    198.521, 198.521,
-                    40.193, 40.193, 40.193, 40.193, 40.193,
-                    40.193, 40.193, 40.193, 40.193, 40.193,
+                    120.0, 120.0, 100.0, 100.0, 40.0, 40.0,
+                    120.0, 120.0, 100.0, 100.0, 40.0, 40.0,
+                    120.0, 100.0,
+                    40.0, 40.0, 20.0, 30.0, 20.0,
+                    40.0, 40.0, 20.0, 30.0, 20.0,
                 ],
                 dtype=np.double,
             )
             kds = np.array(
                 [
-                    9.479, 9.479, 9.479, 12.638, 2.559, 2.559,
-                    9.479, 9.479, 9.479, 12.638, 2.559, 2.559,
-                    15.798, 15.798,
-                    2.559, 2.559, 2.559, 2.559, 2.559,
-                    2.559, 2.559, 2.559, 2.559, 2.559,
+                    12.0, 12.0, 5.0, 5.0, 2.0, 2.0,
+                    12.0, 12.0, 5.0, 5.0, 2.0, 2.0,
+                    12.0, 5.0,
+                    4.0, 4.0, 1.0, 3.0, 1.0,
+                    4.0, 4.0, 1.0, 3.0, 1.0,
                 ],
                 dtype=np.double,
             )
             default_pos = np.array(
                 [
-                    0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
-                    -0.1, 0.0, 0.0, -0.3, -0.2, 0.0,
+                    -0.2, 0.0, 0.0, -0.4, -0.2, 0.0,
+                    0.2, 0.0, 0.0, 0.4, -0.2, 0.0,
                     0.0, 0.0,
-                    0.18, 0.18, 0.0, -1.2, 0.0,
-                    -0.18, -0.18, 0.0, 1.2, 0.0,
+                    0.2, 0.2, 0.0, -1.2, 0.0,
+                    -0.2, -0.2, 0.0, 1.2, 0.0,
                 ],
                 dtype=np.double,
             )
@@ -1292,8 +1298,8 @@ if __name__ == "__main__":
             frame_stack = 8  # obs history length
             num_actions = 24
             action_scale = 0.25
-            # lab_dof_names[i] -> gmr_dof_names index (same mapping as rp1.yaml retarget config).
-            usd2urdf = [6, 0, 12, 7, 1, 13, 8, 2, 14, 19, 9, 3, 15, 20, 10, 4, 16, 21, 11, 5, 17, 22, 18, 23]
+            # lab_dof_names[i] -> gmr/URDF index (deployment usd2urdf).
+            usd2urdf = [0, 6, 12, 1, 7, 13, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22, 18, 23]
 
     enc_sess, act_sess = build_onnx_sessions(
         args.depth_encoder, args.actor, providers=_SIM2SIM_PERF_ONNX_PROVIDERS

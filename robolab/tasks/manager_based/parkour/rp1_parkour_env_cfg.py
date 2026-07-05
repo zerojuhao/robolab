@@ -21,7 +21,7 @@ KEY_BODY_NAMES = [
 ]
 
 RP1_3_CFG.init_state.pos = (0.0, 0.0, 0.85)
-AMP_NUM_STEPS = 3
+AMP_NUM_STEPS = 8
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
@@ -67,7 +67,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         self.scene.camera.offset.rot = (0.866, 0.0, 0.5, 0.0)
         self.scene.camera.mesh_prim_paths.extend(get_link_prim_targets(PR1_LINKS))
         self.motion_data.motion_dataset.motion_data_dir = os.path.join(
-            ROBOLAB_ROOT_DIR, "data", "motions", "rp1_lab"
+            ROBOLAB_ROOT_DIR, "data", "motions", "rp1_24dof_lab"
         )
         self.motion_data.motion_dataset.motion_data_weights = {
             "36_01": 1,
