@@ -12,8 +12,7 @@ from robolab.tasks.manager_based.parkour.mdp.symmetry import rp1
 class RslRlPpoEncoderMoEActorCriticCfg:
     class_name: str = "EncoderMoEActorCritic"
     init_noise_std: float = 1.0
-    noise_std_type: str = "log"
-    num_moe_experts: int = 4
+    num_moe_experts: int = 6
     moe_gate_hidden_dims: list[int] = []
     actor_hidden_dims: list[int] = [256, 128, 64]
     critic_hidden_dims: list[int] = [256, 128, 64]
