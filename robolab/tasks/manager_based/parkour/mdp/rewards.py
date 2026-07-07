@@ -92,7 +92,7 @@ def joint_deviation_l1(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scene
 
 
 
-def rpo_thigh_yaw_joint_sign_penalty(
+def rpo_thigh_yaw_inward_sym_penalty(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:

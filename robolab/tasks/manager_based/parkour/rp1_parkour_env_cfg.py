@@ -96,7 +96,9 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             )
         }
 
-        self.rewards.rewards.rpo_thigh_yaw_joint_sign_penalty = None
+        self.rewards.rewards.rpo_thigh_yaw_inward_sym_penalty = None
+        self.rewards.rewards.rp1_hip_yaw_inward_sym_penalty = None
+        self.rewards.rewards.feet_flat_ori = None
         self.rewards.rewards.feet_close_xy_gauss.params["threshold"] = 0.20
         self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint", "waist_.*_joint"])
         self.rewards.rewards.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="waist_yaw_link")

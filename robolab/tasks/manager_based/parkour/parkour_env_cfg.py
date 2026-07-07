@@ -452,9 +452,9 @@ class ParkourRewardsCfg(MultiRewardCfg):
     heading_error = RewTerm(func=mdp.heading_error, weight=-1.0, params={"command_name": "base_velocity"})
     dont_wait = RewTerm(func=mdp.dont_wait, weight=-1.0, params={"command_name": "base_velocity"})
     is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
-    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-5.0)
+    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
-    rpo_thigh_yaw_joint_sign_penalty = RewTerm(func=mdp.rpo_thigh_yaw_joint_sign_penalty, weight=-10.0)
+    rpo_thigh_yaw_inward_sym_penalty = RewTerm(func=mdp.rpo_thigh_yaw_inward_sym_penalty, weight=-10.0)
     rp1_hip_yaw_inward_sym_penalty = RewTerm(func=mdp.rp1_hip_yaw_inward_sym_penalty, weight=-10.0)
 
     # Regularization rewards
@@ -478,7 +478,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_air_time_positive_biped = RewTerm(
         func=mdp.feet_air_time_positive_biped,
-        weight=1.0,
+        weight=5.0,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "command_name": "base_velocity",
@@ -509,7 +509,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
-                joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint", "waist_.*_joint"],
+                joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint"],
             )
         },
     )
@@ -789,7 +789,7 @@ class EventCfg:
         params={
             "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
             "terrain_velocity_ranges": {
-                "pyramid_stairs": {"x": (0.0, 0.5)},
+                "stairs": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
             },
         },
     )
