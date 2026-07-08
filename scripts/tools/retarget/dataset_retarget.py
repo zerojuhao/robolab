@@ -33,8 +33,8 @@
 Batch retargeting tool: convert multiple GMR motion files to Isaac Lab format.
 
 Behavior:
- - Reads all .pkl files from the input directory (sorted).
- - For each file, loads the GMR pickle and uses extract_gmr_data to convert it (entire motion).
+ - Reads all .pkl and .csv files from the input directory (sorted).
+ - For each file, loads the GMR pickle or CSV motion and uses extract_gmr_data to convert it (entire motion).
  - Runs the simulator once with all motions (num_envs = number of motions) and collects key body positions.
  - Saves each converted motion dict to the output directory with the same filename.
 
@@ -68,19 +68,19 @@ parser.add_argument(
 parser.add_argument(
     "--input_dir",
     type=str,
-    default=None,
+    default="rp1_getup_gmr",
     help="Directory containing input GMR .pkl files (default: robolab/data/motions/<robot>_gmr)",
 )
 parser.add_argument(
     "--output_dir",
     type=str,
-    default=None,
+    default="rp1_getup_lab",
     help="Directory to write converted .pkl files (default: robolab/data/motions/<robot>_lab)",
 )
 parser.add_argument(
     "--config_file",
     type=str,
-    default=None,
+    default="robolab/scripts/tools/retarget/config/rp1_24dof.yaml",
     help="Path to YAML config (default: robolab/scripts/tools/retarget/config/<robot>.yaml)",
 )
 parser.add_argument(
@@ -89,6 +89,12 @@ parser.add_argument(
     choices=["wrap", "clamp"],
     default="clamp",
     help="Loop mode for motion (default: clamp)",
+)
+parser.add_argument(
+    "--csv_fps",
+    type=int,
+    default=120,
+    help="Frame rate used when an input motion is a CSV file.",
 )
 
 AppLauncher.add_app_launcher_args(parser)
@@ -135,7 +141,7 @@ def list_input_files(input_dir: str):
     p = Path(input_dir)
     if not p.exists() or not p.is_dir():
         raise ValueError(f"Input directory does not exist: {input_dir}")
-    files = sorted([f for f in p.iterdir() if f.is_file() and f.suffix == ".pkl"])
+    files = sorted([f for f in p.iterdir() if f.is_file() and f.suffix.lower() in {".pkl", ".csv"}])
     return files
 
 
@@ -152,7 +158,7 @@ def main():
 
     input_files = list_input_files(args_cli.input_dir)
     if len(input_files) == 0:
-        print(f"No .pkl files found in input directory: {args_cli.input_dir}")
+        print(f"No .pkl or .csv files found in input directory: {args_cli.input_dir}")
         return
 
     Path(args_cli.output_dir).mkdir(parents=True, exist_ok=True)
@@ -172,9 +178,10 @@ def main():
             loop_mode=loop_mode,
             start_frame=0,
             end_frame=-1,
+            csv_fps=args_cli.csv_fps,
         )
         motion_data_dicts.append(motion)
-        input_names.append(p.name)
+        input_names.append(p.with_suffix(".pkl").name)
         fps_values.append(motion['fps'])
 
     # check fps consistency

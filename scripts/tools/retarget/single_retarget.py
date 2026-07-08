@@ -99,6 +99,7 @@ GMR Format:
 
 
 import argparse
+from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
@@ -115,7 +116,7 @@ parser.add_argument(
     "--input_file",
     type=str,
     default=None,
-    help="Path to the input GMR motion file (pickle format).",
+    help="Path to the input GMR motion file (.pkl or .csv).",
 )
 parser.add_argument(
     "--output_file",
@@ -146,11 +147,19 @@ parser.add_argument(
         " loaded."
     ),
 )
+parser.add_argument(
+    "--csv_fps",
+    type=int,
+    default=120,
+    help="Frame rate used when the input motion is a CSV file.",
+)
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
+if args_cli.output_file is None and args_cli.input_file is not None:
+    args_cli.output_file = str(Path(args_cli.input_file).with_suffix(".pkl"))
 
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
@@ -166,7 +175,6 @@ import argparse
 import enum
 import yaml
 import torch
-from pathlib import Path
 
 import isaaclab.sim as sim_utils
 from isaaclab.scene import InteractiveScene
@@ -217,6 +225,7 @@ if __name__ == "__main__":
         loop_mode=loop_mode,
         start_frame=args_cli.frame_range[0] if args_cli.frame_range else 0,
         end_frame=args_cli.frame_range[1] if args_cli.frame_range else -1,
+        csv_fps=args_cli.csv_fps,
     )
     
     fps = motion_data_dict['fps']
@@ -249,6 +258,7 @@ if __name__ == "__main__":
     print(f"🔁 Loop Mode: {loop_mode.name}")
     print("="*60 + "\n")
     
+    Path(args_cli.output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(args_cli.output_file, 'wb') as f:
         pickle.dump(motion_data_dict, f)
     print("✅ Data saved successfully.")

@@ -32,8 +32,8 @@ FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     y_max=0.04,
     y_num=9,
     z_min=-0.05,
-    z_max=-0.03,
-    z_num=3,
+    z_max=-0.02,
+    z_num=4,
 )
 KNEE_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     x_min=-0.02,
@@ -70,9 +70,11 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             ROBOLAB_ROOT_DIR, "data", "motions", "rp1_24dof_lab"
         )
         self.motion_data.motion_dataset.motion_data_weights = {
+            # CMU
             "36_01": 1,
             "36_11": 1,
             "114_09": 1,
+            # ACCAD
             "A1-_Stand_stageii": 1,
             "B4_-_Stand_to_Walk_backwards_stageii": 1,
             "B9_-__Walk_turn_left_90_stageii": 1,
@@ -80,11 +82,20 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             "B13_-__Walk_turn_right_90_stageii": 1,
             "B14_-__Walk_turn_right_45_t2_stageii": 1,
             "B15_-__Walk_turn_around_stageii": 1,
+            # GVHMR
             "move_back": 1,
             "move_l": 1,
             "move_r": 1,
             "turn_l": 1,
             "turn_r": 1,
+            # SEED
+            "idle_loop_001__A046": 1,
+            "stairs_climbing_down_loop_R_102__A301_M": 1,
+            "stairs_climbing_down_stop_R_103__A301": 1,
+            "stairs_climbing_up_start_R_001__A300": 1,
+            "walk_arc_cw_loop_001__A048_M": 1,
+            "walk_arc_cw_loop_001__A048": 1,
+            "walk_ff_loop_180_R_001__A048": 1,
         }
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
         self.observations.disc.history_length = AMP_NUM_STEPS

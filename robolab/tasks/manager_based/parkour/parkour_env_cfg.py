@@ -410,7 +410,7 @@ class CommandsCfg:
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
         rel_standing_envs=0.05,
-        straight_target_prob=0.8, # 80% chance to force the target y to 0 for straight walking.
+        straight_target_prob=0.7, # 80% chance to force the target y to 0 for straight walking.
         ranges=mdp.PoseVelocityCommandCfg.Ranges(lin_vel_x=(0.0, 0.0), lin_vel_y=(0.0, 0.0), ang_vel_z=(-1.0, 1.0)),
         random_velocity_terrain=["perlin_rough_x", "perlin_rough_y", "perlin_rough_z", "perlin_rough_stand"],
         velocity_ranges={
@@ -478,7 +478,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_air_time_positive_biped = RewTerm(
         func=mdp.feet_air_time_positive_biped,
-        weight=5.0,
+        weight=0.5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "command_name": "base_velocity",
@@ -542,7 +542,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     # flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-3.0)
     pelvis_orientation_l2 = RewTerm(
-        func=mdp.link_orientation, weight=-5.0, params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
+        func=mdp.link_orientation, weight=-1.0, params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
     )
     pelvis_ang_vel_xy_l2 = RewTerm(
         func=mdp.link_ang_vel_xy_l2,
@@ -798,13 +798,13 @@ class EventCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    terrain_levels = CurrTerm(
-        func=mdp.tracking_exp_vel,
-        params={
-            "lin_vel_threshold": (0.7, 0.9),
-            "ang_vel_threshold": (0.0, 0.0),
-        },
-    )
+    # terrain_levels = CurrTerm(
+    #     func=mdp.tracking_exp_vel,
+    #     params={
+    #         "lin_vel_threshold": (0.7, 0.9),
+    #         "ang_vel_threshold": (0.0, 0.0),
+    #     },
+    # )
     volume_points_penetration_weight_feet = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
@@ -813,7 +813,7 @@ class CurriculumCfg:
             "final_weight": -50.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.2,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
@@ -824,7 +824,7 @@ class CurriculumCfg:
             "final_weight": -50.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.2,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -835,7 +835,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.2,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -846,7 +846,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.2,
         },
     )
 

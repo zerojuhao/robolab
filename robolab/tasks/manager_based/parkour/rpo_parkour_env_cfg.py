@@ -25,9 +25,9 @@ AMP_NUM_STEPS = 8
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
-    x_min=-0.08,
-    x_max=0.15,
-    x_num=23,
+    x_min=-0.05,
+    x_max=0.10,
+    x_num=16,
     y_min=-0.035,
     y_max=0.035,
     y_num=8,

@@ -60,6 +60,7 @@ Output Isaac Lab Format:
 
 import pickle
 import re
+from pathlib import Path
 import numpy as np
 import enum
 import torch
@@ -86,9 +87,9 @@ def extract_gmr_data(
     loop_mode: LoopMode,
     start_frame: int = 0,
     end_frame: int = -1,
+    csv_fps: int = 30,
 ):
-    with open(gmr_file_path, 'rb') as f:
-        gmr_data = pickle.load(f)
+    gmr_data = load_gmr_motion_data(gmr_file_path, gmr_dof_names, csv_fps)
         
     # Extract data from GMR format
     fps = gmr_data['fps']
@@ -146,6 +147,50 @@ def extract_gmr_data(
     }
     
     return output_data
+
+
+def load_gmr_motion_data(
+    motion_file_path: str,
+    gmr_dof_names: list[str],
+    csv_fps: int = 30,
+) -> dict[str, np.ndarray]:
+    """Load a GMR motion from a pickle file or a raw CSV motion export."""
+    motion_path = Path(motion_file_path)
+    suffix = motion_path.suffix.lower()
+    dof_count = len(gmr_dof_names)
+
+    if suffix == ".pkl":
+        with open(motion_path, "rb") as f:
+            return pickle.load(f)
+
+    if suffix != ".csv":
+        raise ValueError(f"Unsupported motion file format '{suffix}' for {motion_file_path}. Expected .pkl or .csv.")
+
+    motion = np.loadtxt(motion_path, delimiter=",", dtype=np.float32)
+    if motion.ndim == 1:
+        motion = motion.reshape(1, -1)
+
+    print(f"[INFO] CSV has {motion.shape[1]} columns; dropping the first column before retargeting.")
+    motion = motion[:, 1:]
+
+    expected_cols = 7 + dof_count
+    if motion.shape[1] != expected_cols:
+        raise ValueError(
+            f"CSV motion must have {expected_cols} columns (root_pos xyz + root_rot xyzw + {dof_count} dofs) "
+            f"got {motion.shape[1]} in {motion_file_path} after dropping the first column."
+        )
+
+    dof_pos = motion[:, 7:]
+
+    print(f"[INFO] Loaded CSV motion: {motion_file_path}, frames={motion.shape[0]}, fps={csv_fps}")
+    return {
+        "fps": csv_fps,
+        "root_pos": motion[:, :3],
+        "root_rot": motion[:, 3:7],
+        "dof_pos": dof_pos,
+        "local_body_pos": None,
+        "link_body_list": None,
+    }
 
 def run_simulator(
         simulation_app, 

@@ -54,7 +54,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
     vertical_scale=0.005,
     slope_threshold=1.0,
     use_cache=False,
-    curriculum=True,
+    curriculum=False,
     sub_terrains={
         "perlin_rough": terrain_gen.PerlinPlaneTerrainCfg(
             proportion=0.05,

@@ -31,12 +31,15 @@
 
 """Load and visualize a RoboLab robot, then print its Isaac Lab joint/link order.
 
+Optionally visualize parkour feet ``FEET_VOLUME_POINTS_GRID`` from the selected robot cfg.
+
 Example usage:
 
 .. code-block:: bash
 
-    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py
-    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --headless
+    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --robot rp1
+    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --robot rpo --show-volume-points
+    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --robot rp1 --no-show-volume-points
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -45,7 +48,20 @@ import argparse
 
 from isaaclab.app import AppLauncher
 
-parser = argparse.ArgumentParser(description="Visualize RP1_3_CFG and print Isaac Lab joint order.")
+parser = argparse.ArgumentParser(description="Visualize RP1/RPO and optional parkour feet volume points.")
+parser.add_argument(
+    "--robot",
+    type=str,
+    choices=("rp1", "rpo"),
+    default="rp1",
+    help="Robot model to spawn (default: rp1).",
+)
+parser.add_argument(
+    "--show-volume-points",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Visualize FEET_VOLUME_POINTS_GRID on ankle_roll_link (default: True).",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -61,28 +77,64 @@ from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from robolab.assets.robots.roboparty import RP1_3_CFG
+from robolab.assets.robots.roboparty import RP1_3_CFG, RPO_CFG
+from robolab.sensors import VOLUME_POINTS_VISUALIZER_CFG, Grid3dPointsGeneratorCfg, VolumePointsCfg
+from robolab.tasks.manager_based.parkour.rp1_parkour_env_cfg import FEET_VOLUME_POINTS_GRID as RP1_FEET_VOLUME_POINTS_GRID
+from robolab.tasks.manager_based.parkour.rpo_parkour_env_cfg import FEET_VOLUME_POINTS_GRID as RPO_FEET_VOLUME_POINTS_GRID
+
+ROBOT_SPAWN_HEIGHT = 1.5
+
+FEET_VOLUME_POINTS_VISUALIZER_CFG = VOLUME_POINTS_VISUALIZER_CFG.replace(
+    prim_path="/Visuals/feetVolumePoints",
+)
 
 
-@configclass
-class RobotSceneCfg(InteractiveSceneCfg):
-    """Scene with ground, lighting, and the RP1 robot."""
+def get_robot_setup(robot_name: str) -> tuple[ArticulationCfg, Grid3dPointsGeneratorCfg, str]:
+    """Return robot cfg, feet volume grid, and display label."""
+    if robot_name == "rpo":
+        robot_cfg = RPO_CFG
+        feet_grid = RPO_FEET_VOLUME_POINTS_GRID
+        label = "RPO (rpo_parkour_env_cfg.FEET_VOLUME_POINTS_GRID)"
+    else:
+        robot_cfg = RP1_3_CFG
+        feet_grid = RP1_FEET_VOLUME_POINTS_GRID
+        label = "RP1 (rp1_parkour_env_cfg.FEET_VOLUME_POINTS_GRID)"
+    robot_cfg.init_state.pos = (0.0, 0.0, ROBOT_SPAWN_HEIGHT)
+    return robot_cfg, feet_grid, label
 
-    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
 
-    sky_light = AssetBaseCfg(
-        prim_path="/World/skyLight",
-        spawn=sim_utils.DomeLightCfg(
-            intensity=750.0,
-            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
-        ),
-    )
+def make_robot_scene_cfg(robot_cfg: ArticulationCfg, feet_grid: Grid3dPointsGeneratorCfg, show_volume_points: bool):
+    """Build scene cfg for the selected robot and volume-point options."""
 
-    robot: ArticulationCfg = RP1_3_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    @configclass
+    class RobotSceneCfg(InteractiveSceneCfg):
+        """Scene with ground, lighting, and the selected robot."""
+
+        ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+
+        sky_light = AssetBaseCfg(
+            prim_path="/World/skyLight",
+            spawn=sim_utils.DomeLightCfg(
+                intensity=750.0,
+                texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            ),
+        )
+
+        robot: ArticulationCfg = robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+        if show_volume_points:
+            feet_volume_points = VolumePointsCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/.*_ankle_roll_link",
+                points_generator=feet_grid,
+                debug_vis=True,
+                visualizer_cfg=FEET_VOLUME_POINTS_VISUALIZER_CFG,
+            )
+
+    return RobotSceneCfg
 
 
 def print_joint_order(robot: Articulation) -> None:
-    """Print Isaac Lab joint names in rp1_24dof.yaml lab_dof_names format."""
+    """Print Isaac Lab joint names."""
     joint_names = list(robot.joint_names)
     num_joints = len(joint_names)
 
@@ -98,7 +150,7 @@ def print_joint_order(robot: Articulation) -> None:
 
 
 def print_link_order(robot: Articulation) -> None:
-    """Print Isaac Lab body names in roboparty.py PR1_LINKS format."""
+    """Print Isaac Lab body names."""
     body_names = list(robot.body_names)
     num_bodies = len(body_names)
 
@@ -115,35 +167,64 @@ def print_link_order(robot: Articulation) -> None:
     print("=" * 72 + "\n")
 
 
+def print_feet_volume_points_info(scene: InteractiveScene, grid: Grid3dPointsGeneratorCfg, label: str) -> None:
+    """Print parkour feet volume-point grid info."""
+    feet_sensor = scene["feet_volume_points"]
+
+    print("\n" + "=" * 72)
+    print(f"Parkour feet volume points: {label}")
+    print("=" * 72)
+    print(f"  grid x: [{grid.x_min}, {grid.x_max}] x{grid.x_num}")
+    print(f"  grid y: [{grid.y_min}, {grid.y_max}] x{grid.y_num}")
+    print(f"  grid z: [{grid.z_min}, {grid.z_max}] x{grid.z_num}")
+    print(f"  bodies ({feet_sensor.data.point_num_each_body} pts/link): {list(feet_sensor.body_names)}")
+    print("=" * 72 + "\n")
+
+
 def run_simulator(sim: SimulationContext, scene: InteractiveScene):
-    """Render loop: hold the robot at its default pose."""
+    """Render loop: hold the robot at its default pose without physics."""
     robot: Articulation = scene["robot"]
     sim_dt = sim.get_physics_dt()
+
+    root_states = robot.data.default_root_state.clone()
+    root_states[:, :3] += scene.env_origins
+    default_joint_pos = robot.data.default_joint_pos
+    default_joint_vel = robot.data.default_joint_vel
+
+    while simulation_app.is_running():
+        robot.write_root_state_to_sim(root_states)
+        robot.write_joint_state_to_sim(default_joint_pos, default_joint_vel)
+        scene.write_data_to_sim()
+        sim.forward()
+        sim.render()
+        scene.update(sim_dt)
+
+
+def main():
+    robot_cfg, feet_grid, grid_label = get_robot_setup(args_cli.robot)
+    scene_cfg = make_robot_scene_cfg(robot_cfg, feet_grid, args_cli.show_volume_points)
+
+    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
+    sim_cfg.dt = 0.02
+    sim = SimulationContext(sim_cfg)
+
+    scene = InteractiveScene(scene_cfg(num_envs=1, env_spacing=2.0))
+    sim.reset()
+
+    robot: Articulation = scene["robot"]
+    print_joint_order(robot)
+    print_link_order(robot)
 
     root_states = robot.data.default_root_state.clone()
     root_states[:, :3] += scene.env_origins
     robot.write_root_state_to_sim(root_states)
     robot.write_joint_state_to_sim(robot.data.default_joint_pos, robot.data.default_joint_vel)
     scene.write_data_to_sim()
+    sim.forward()
+    scene.update(sim.get_physics_dt())
 
-    while simulation_app.is_running():
-        scene.write_data_to_sim()
-        sim.render()
-        scene.update(sim_dt)
-
-
-def main():
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim_cfg.dt = 0.02
-    sim = SimulationContext(sim_cfg)
-
-    scene_cfg = RobotSceneCfg(num_envs=1, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
-    sim.reset()
-
-    robot: Articulation = scene["robot"]
-    print_joint_order(robot)
-    print_link_order(robot)
+    if args_cli.show_volume_points:
+        print_feet_volume_points_info(scene, feet_grid, grid_label)
 
     if not args_cli.headless:
         root_pos = robot.data.default_root_state[0, :3].cpu().tolist()

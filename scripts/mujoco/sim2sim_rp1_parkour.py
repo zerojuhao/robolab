@@ -64,7 +64,7 @@ _OBS_HISTORY_KEYS: tuple[str, ...] = (
 # Extrinsic: RP1ParkourEnvCfg scene.camera.offset on waist_yaw_link (world: x + R_waist @ pos).
 _CAMERA_OFFSET_POS_BODY = np.array([0.09175, 0.01, 0.3982], dtype=np.float64)
 # Offset rot (w,x,y,z) per GroupedRayCasterCameraCfg / IsaacLab (not scipy order).
-_CAMERA_OFFSET_QUAT_WXYZ = np.array([0.92388, 0.0, 0.38268, 0.0], dtype=np.float64)
+_CAMERA_OFFSET_QUAT_WXYZ = np.array([0.866, 0.0, 0.5, 0.0], dtype=np.float64)
 # Depth clip: MJCF <map znear> × extent; keep small to avoid near-field stair tread culling.
 _DEPTH_ZNEAR_SCALE = 0.001
 _DEPTH_ZFAR_SCALE = 50.0
@@ -92,9 +92,9 @@ _CHASE_UP_M = 0.6
 _CHASE_LOOK_AHEAD_M = 0.8
 _CHASE_BODY_NAME = "base_link"
 # Deployment velocity limits (min, max) per axis: vx, vy, dyaw.
-_CLIP_CMD_X = (-0.6, 0.8)
+_CLIP_CMD_X = (-0.6, 0.6)
 _CLIP_CMD_Y = (-0.6, 0.6)
-_CLIP_CMD_Z = (-1.5, 1.5)
+_CLIP_CMD_Z = (-1.0, 1.0)
 
 
 class CompactOverlayMujocoViewer(mujoco_viewer.MujocoViewer):
@@ -1199,7 +1199,7 @@ def run_mujoco_onnx(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
-        "rp1et"
+        "rp1e0"
     )
     parser.add_argument(
         "--depth_encoder",
