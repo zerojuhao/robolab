@@ -155,7 +155,7 @@ RPO_CFG = ArticulationCfg(
 )
 
 
-RP1_3_CFG = ArticulationCfg(
+RP1_24DOF_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         asset_path=f"{ISAAC_DATA_DIR}/robots/roboparty/rp1.3/urdf/rp1_24dof.urdf",
         fix_base=False,

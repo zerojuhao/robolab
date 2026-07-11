@@ -10,11 +10,11 @@ Example usage:
 
 .. code-block:: bash
 
-    ./isaaclab.sh -p robolab/robolab/tasks/manager_based/parkour/visualize_terrain.py
-    ./isaaclab.sh -p robolab/robolab/tasks/manager_based/parkour/visualize_terrain.py --sub_terrain trapezoid_stairs
-    ./isaaclab.sh -p robolab/robolab/tasks/manager_based/parkour/visualize_terrain.py --color_scheme height --use_curriculum
-    ./isaaclab.sh -p robolab/robolab/tasks/manager_based/parkour/visualize_terrain.py --tick_spacing 0.5
-    ./isaaclab.sh -p robolab/robolab/tasks/manager_based/parkour/visualize_terrain.py --no_debug_overlay
+    python scripts/tools/visualize_terrain.py
+    python scripts/tools/visualize_terrain.py --sub_terrain pyramid_stairs
+    python scripts/tools/visualize_terrain.py --color_scheme height --use_curriculum
+    python scripts/tools/visualize_terrain.py --tick_spacing 0.5
+    python scripts/tools/visualize_terrain.py --no_debug_overlay
 """
 
 """Launch Isaac Sim Simulator first."""

@@ -37,9 +37,9 @@ Example usage:
 
 .. code-block:: bash
 
-    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --robot rp1
-    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --robot rpo --show-volume-points
-    ./isaaclab.sh -p robolab/scripts/tools/visualize_robot.py --robot rp1 --no-show-volume-points
+    python scripts/tools/visualize_robot.py --robot rp1
+    python scripts/tools/visualize_robot.py --robot rpo --show-volume-points
+    python scripts/tools/visualize_robot.py --robot rp1 --no-show-volume-points
 """
 
 """Launch Isaac Sim Simulator first."""
