@@ -5,7 +5,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from robolab import ROBOLAB_ROOT_DIR
-from robolab.assets.robots.roboparty import PR1_LINKS, RP1_3_CFG
+from robolab.assets.robots.roboparty import PR1_LINKS, RP1_24DOF_CFG
 from robolab.sensors import get_link_prim_targets
 from robolab.tasks.manager_based.parkour.parkour_env_cfg import ROUGH_TERRAINS_CFG, ParkourEnvCfg
 from robolab.sensors import Grid3dPointsGeneratorCfg, NoisyGroupedRayCasterCameraCfg, VolumePointsCfg
@@ -20,7 +20,7 @@ KEY_BODY_NAMES = [
     "right_wrist_roll_link",
 ]
 
-RP1_3_CFG.init_state.pos = (0.0, 0.0, 0.85)
+RP1_24DOF_CFG.init_state.pos = (0.0, 0.0, 0.85)
 AMP_NUM_STEPS = 8
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
@@ -59,7 +59,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         super().__post_init__()
         # Scene
         self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG
-        self.scene.robot = RP1_3_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot = RP1_24DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.feet_volume_points.points_generator = FEET_VOLUME_POINTS_GRID
         self.scene.knee_volume_points.points_generator = KNEE_VOLUME_POINTS_GRID
         self.scene.camera.prim_path = "{ENV_REGEX_NS}/Robot/waist_yaw_link"
@@ -89,13 +89,13 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             "turn_l": 1,
             "turn_r": 1,
             # SEED
-            "idle_loop_001__A046": 1,
-            "stairs_climbing_down_loop_R_102__A301_M": 1,
-            "stairs_climbing_down_stop_R_103__A301": 1,
-            "stairs_climbing_up_start_R_001__A300": 1,
-            "walk_arc_cw_loop_001__A048_M": 1,
-            "walk_arc_cw_loop_001__A048": 1,
-            "walk_ff_loop_180_R_001__A048": 1,
+            # "idle_loop_001__A046": 1,
+            # "stairs_climbing_down_loop_R_102__A301_M": 1,
+            # "stairs_climbing_down_stop_R_103__A301": 1,
+            # "stairs_climbing_up_start_R_001__A300": 1,
+            # "walk_arc_cw_loop_001__A048_M": 1,
+            # "walk_arc_cw_loop_001__A048": 1,
+            # "walk_ff_loop_180_R_001__A048": 1,
         }
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
         self.observations.disc.history_length = AMP_NUM_STEPS
@@ -108,7 +108,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         }
 
         self.rewards.rewards.rpo_thigh_yaw_inward_sym_penalty = None
-        self.rewards.rewards.rp1_hip_yaw_inward_sym_penalty = None
+        # self.rewards.rewards.rp1_hip_yaw_inward_sym_penalty = None
         self.rewards.rewards.feet_flat_ori = None
         self.rewards.rewards.feet_close_xy_gauss.params["threshold"] = 0.20
         self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint", "waist_.*_joint"])

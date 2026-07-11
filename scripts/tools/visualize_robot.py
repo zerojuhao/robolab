@@ -40,6 +40,7 @@ Example usage:
     python scripts/tools/visualize_robot.py --robot rp1
     python scripts/tools/visualize_robot.py --robot rpo --show-volume-points
     python scripts/tools/visualize_robot.py --robot rp1 --no-show-volume-points
+    python scripts/tools/visualize_robot.py --robot rp1 --show-height-scanner-rays
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -62,6 +63,12 @@ parser.add_argument(
     default=True,
     help="Visualize FEET_VOLUME_POINTS_GRID on ankle_roll_link (default: True).",
 )
+parser.add_argument(
+    "--show-height-scanner-rays",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Visualize parkour foot height-scanner ray hits (default: True).",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -73,11 +80,12 @@ simulation_app = app_launcher.app
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from robolab.assets.robots.roboparty import RP1_3_CFG, RPO_CFG
+from robolab.assets.robots.roboparty import RP1_24DOF_CFG, RPO_CFG
 from robolab.sensors import VOLUME_POINTS_VISUALIZER_CFG, Grid3dPointsGeneratorCfg, VolumePointsCfg
 from robolab.tasks.manager_based.parkour.rp1_parkour_env_cfg import FEET_VOLUME_POINTS_GRID as RP1_FEET_VOLUME_POINTS_GRID
 from robolab.tasks.manager_based.parkour.rpo_parkour_env_cfg import FEET_VOLUME_POINTS_GRID as RPO_FEET_VOLUME_POINTS_GRID
@@ -88,6 +96,15 @@ FEET_VOLUME_POINTS_VISUALIZER_CFG = VOLUME_POINTS_VISUALIZER_CFG.replace(
     prim_path="/Visuals/feetVolumePoints",
 )
 
+# Matches parkour_env_cfg left/right_height_scanner (mesh path adapted for this scene's ground).
+FOOT_HEIGHT_SCANNER_CFG = RayCasterCfg(
+    offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 20.0)),
+    ray_alignment="yaw",
+    pattern_cfg=patterns.GridPatternCfg(resolution=0.12, size=[0.12, 0.0]),
+    mesh_prim_paths=["/World/defaultGroundPlane"],
+    update_period=0.02,
+)
+
 
 def get_robot_setup(robot_name: str) -> tuple[ArticulationCfg, Grid3dPointsGeneratorCfg, str]:
     """Return robot cfg, feet volume grid, and display label."""
@@ -96,14 +113,19 @@ def get_robot_setup(robot_name: str) -> tuple[ArticulationCfg, Grid3dPointsGener
         feet_grid = RPO_FEET_VOLUME_POINTS_GRID
         label = "RPO (rpo_parkour_env_cfg.FEET_VOLUME_POINTS_GRID)"
     else:
-        robot_cfg = RP1_3_CFG
+        robot_cfg = RP1_24DOF_CFG
         feet_grid = RP1_FEET_VOLUME_POINTS_GRID
         label = "RP1 (rp1_parkour_env_cfg.FEET_VOLUME_POINTS_GRID)"
     robot_cfg.init_state.pos = (0.0, 0.0, ROBOT_SPAWN_HEIGHT)
     return robot_cfg, feet_grid, label
 
 
-def make_robot_scene_cfg(robot_cfg: ArticulationCfg, feet_grid: Grid3dPointsGeneratorCfg, show_volume_points: bool):
+def make_robot_scene_cfg(
+    robot_cfg: ArticulationCfg,
+    feet_grid: Grid3dPointsGeneratorCfg,
+    show_volume_points: bool,
+    show_height_scanner_rays: bool,
+):
     """Build scene cfg for the selected robot and volume-point options."""
 
     @configclass
@@ -128,6 +150,16 @@ def make_robot_scene_cfg(robot_cfg: ArticulationCfg, feet_grid: Grid3dPointsGene
                 points_generator=feet_grid,
                 debug_vis=True,
                 visualizer_cfg=FEET_VOLUME_POINTS_VISUALIZER_CFG,
+            )
+
+        if show_height_scanner_rays:
+            left_height_scanner = FOOT_HEIGHT_SCANNER_CFG.replace(
+                prim_path="{ENV_REGEX_NS}/Robot/left_ankle_roll_link",
+                debug_vis=True,
+            )
+            right_height_scanner = FOOT_HEIGHT_SCANNER_CFG.replace(
+                prim_path="{ENV_REGEX_NS}/Robot/right_ankle_roll_link",
+                debug_vis=True,
             )
 
     return RobotSceneCfg
@@ -181,6 +213,23 @@ def print_feet_volume_points_info(scene: InteractiveScene, grid: Grid3dPointsGen
     print("=" * 72 + "\n")
 
 
+def print_height_scanner_info(scene: InteractiveScene) -> None:
+    """Print parkour foot height-scanner layout (matches parkour_env_cfg)."""
+    left = scene["left_height_scanner"]
+    right = scene["right_height_scanner"]
+    pattern = FOOT_HEIGHT_SCANNER_CFG.pattern_cfg
+
+    print("\n" + "=" * 72)
+    print("Parkour foot height scanners (parkour_env_cfg left/right_height_scanner)")
+    print("=" * 72)
+    print(f"  offset: {FOOT_HEIGHT_SCANNER_CFG.offset.pos}")
+    print(f"  grid: resolution={pattern.resolution} m, size={pattern.size} -> {left.num_rays} rays/foot")
+    print(f"  left prim:  {left.cfg.prim_path}")
+    print(f"  right prim: {right.cfg.prim_path}")
+    print("  debug markers show ray hit points on the ground")
+    print("=" * 72 + "\n")
+
+
 def run_simulator(sim: SimulationContext, scene: InteractiveScene):
     """Render loop: hold the robot at its default pose without physics."""
     robot: Articulation = scene["robot"]
@@ -202,7 +251,9 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene):
 
 def main():
     robot_cfg, feet_grid, grid_label = get_robot_setup(args_cli.robot)
-    scene_cfg = make_robot_scene_cfg(robot_cfg, feet_grid, args_cli.show_volume_points)
+    scene_cfg = make_robot_scene_cfg(
+        robot_cfg, feet_grid, args_cli.show_volume_points, args_cli.show_height_scanner_rays
+    )
 
     sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
     sim_cfg.dt = 0.02
@@ -225,6 +276,9 @@ def main():
 
     if args_cli.show_volume_points:
         print_feet_volume_points_info(scene, feet_grid, grid_label)
+
+    if args_cli.show_height_scanner_rays:
+        print_height_scanner_info(scene)
 
     if not args_cli.headless:
         root_pos = robot.data.default_root_state[0, :3].cpu().tolist()

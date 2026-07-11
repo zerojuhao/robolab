@@ -123,7 +123,7 @@ from isaaclab.scene import InteractiveScene
 if args_cli.robot == "rpo":
     from robolab.assets.robots.roboparty import RPO_CFG as ROBOT_CFG
 elif args_cli.robot == "rp1_24dof":
-    from robolab.assets.robots.roboparty import RP1_3_CFG as ROBOT_CFG
+    from robolab.assets.robots.roboparty import RP1_24DOF_CFG as ROBOT_CFG
 else:
     raise ValueError(f"Robot {args_cli.robot} not supported.")
 

@@ -313,7 +313,7 @@ class ObservationsCfg:
     @configclass
     class DiscriminatorCfg(ObsGroup):
         root_local_rot_tan_norm = ObsTerm(func=mdp.root_local_rot_tan_norm)
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        # base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
@@ -346,13 +346,13 @@ class ObservationsCfg:
                 "flatten_steps_dim": False,
             }
         )
-        ref_root_lin_vel_b = ObsTerm(
-            func=mdp.ref_root_lin_vel_b,
-            params={
-                "animation": "animation",
-                "flatten_steps_dim": False,
-            }
-        )
+        # ref_root_lin_vel_b = ObsTerm(
+        #     func=mdp.ref_root_lin_vel_b,
+        #     params={
+        #         "animation": "animation",
+        #         "flatten_steps_dim": False,
+        #     }
+        # )
         ref_root_ang_vel_b = ObsTerm(
             func=mdp.ref_root_ang_vel_b,
             params={
@@ -443,19 +443,19 @@ class ParkourRewardsCfg(MultiRewardCfg):
     # Task rewards
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=5.0,
+        weight=3.0,
         params={"command_name": "base_velocity", "std": 0.5},
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=5.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_ang_vel_z_exp, weight=3.0, params={"command_name": "base_velocity", "std": 0.5}
     )
     heading_error = RewTerm(func=mdp.heading_error, weight=-1.0, params={"command_name": "base_velocity"})
     dont_wait = RewTerm(func=mdp.dont_wait, weight=-1.0, params={"command_name": "base_velocity"})
     is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
-    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
+    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-3.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
-    rpo_thigh_yaw_inward_sym_penalty = RewTerm(func=mdp.rpo_thigh_yaw_inward_sym_penalty, weight=-10.0)
-    rp1_hip_yaw_inward_sym_penalty = RewTerm(func=mdp.rp1_hip_yaw_inward_sym_penalty, weight=-10.0)
+    rpo_thigh_yaw_inward_sym_penalty = RewTerm(func=mdp.rpo_thigh_yaw_inward_sym_penalty, weight=-1.0)
+    rp1_hip_yaw_inward_sym_penalty = RewTerm(func=mdp.rp1_hip_yaw_inward_sym_penalty, weight=-1.0)
 
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
@@ -464,7 +464,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
         params={
             "sensor_cfg": SceneEntityCfg("feet_volume_points"),
             "enable_terrain_foot_weights": True,
-            "stairs_weight_min": 0.0,
+            "stairs_weight_min": 0.2,
             "stairs_weight_max": 1.0,
             "debug_print_terrain": False,
         },
@@ -505,7 +505,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     joint_deviation_upper_body = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.1,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -559,7 +559,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_at_plane = RewTerm(
         func=mdp.feet_at_plane,
-        weight=-0.5,
+        weight=-1.0,
         params={
             "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "left_height_scanner_cfg": SceneEntityCfg("left_height_scanner"),
@@ -785,11 +785,11 @@ class EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity_per_terrain,
         mode="interval",
-        interval_range_s=(5.0, 10.0),
+        interval_range_s=(5.0, 7.0),
         params={
             "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
             "terrain_velocity_ranges": {
-                "stairs": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
+                "stairs": {"x": (0.0, 0.5), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
             },
         },
     )
@@ -798,22 +798,22 @@ class EventCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    # terrain_levels = CurrTerm(
-    #     func=mdp.tracking_exp_vel,
-    #     params={
-    #         "lin_vel_threshold": (0.7, 0.9),
-    #         "ang_vel_threshold": (0.0, 0.0),
-    #     },
-    # )
+    terrain_levels = CurrTerm(
+        func=mdp.tracking_exp_vel,
+        params={
+            "lin_vel_threshold": (0.7, 0.9),
+            "ang_vel_threshold": (0.0, 0.0),
+        },
+    )
     volume_points_penetration_weight_feet = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
             "term_name": "volume_points_penetration_feet",
             "init_weight": -1.0,
-            "final_weight": -50.0,
+            "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.05,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
@@ -821,10 +821,10 @@ class CurriculumCfg:
         params={
             "term_name": "volume_points_penetration_knee",
             "init_weight": -1.0,
-            "final_weight": -50.0,
+            "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.05,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -835,7 +835,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.05,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -846,7 +846,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.05,
         },
     )
 
