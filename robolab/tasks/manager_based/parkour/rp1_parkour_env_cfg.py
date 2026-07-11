@@ -9,6 +9,7 @@ from robolab.assets.robots.roboparty import PR1_LINKS, RP1_24DOF_CFG
 from robolab.sensors import get_link_prim_targets
 from robolab.tasks.manager_based.parkour.parkour_env_cfg import ROUGH_TERRAINS_CFG, ParkourEnvCfg
 from robolab.sensors import Grid3dPointsGeneratorCfg, NoisyGroupedRayCasterCameraCfg, VolumePointsCfg
+from isaaclab.sensors import patterns
 
 # Must match lab_key_body_names in robolab/scripts/tools/retarget/config/rp1.yaml
 KEY_BODY_NAMES = [
@@ -60,6 +61,8 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         # Scene
         self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG
         self.scene.robot = RP1_24DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.left_height_scanner.pattern_cfg = patterns.GridPatternCfg(resolution=0.01, size=[0.2, 0.04])
+        self.scene.right_height_scanner.pattern_cfg = patterns.GridPatternCfg(resolution=0.01, size=[0.2, 0.04])
         self.scene.feet_volume_points.points_generator = FEET_VOLUME_POINTS_GRID
         self.scene.knee_volume_points.points_generator = KNEE_VOLUME_POINTS_GRID
         self.scene.camera.prim_path = "{ENV_REGEX_NS}/Robot/waist_yaw_link"

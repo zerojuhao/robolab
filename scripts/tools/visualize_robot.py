@@ -60,7 +60,7 @@ parser.add_argument(
 parser.add_argument(
     "--show-volume-points",
     action=argparse.BooleanOptionalAction,
-    default=True,
+    default=False,
     help="Visualize FEET_VOLUME_POINTS_GRID on ankle_roll_link (default: True).",
 )
 parser.add_argument(
@@ -89,8 +89,9 @@ from robolab.assets.robots.roboparty import RP1_24DOF_CFG, RPO_CFG
 from robolab.sensors import VOLUME_POINTS_VISUALIZER_CFG, Grid3dPointsGeneratorCfg, VolumePointsCfg
 from robolab.tasks.manager_based.parkour.rp1_parkour_env_cfg import FEET_VOLUME_POINTS_GRID as RP1_FEET_VOLUME_POINTS_GRID
 from robolab.tasks.manager_based.parkour.rpo_parkour_env_cfg import FEET_VOLUME_POINTS_GRID as RPO_FEET_VOLUME_POINTS_GRID
+from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 
-ROBOT_SPAWN_HEIGHT = 1.5
+ROBOT_SPAWN_HEIGHT = 0.8
 
 FEET_VOLUME_POINTS_VISUALIZER_CFG = VOLUME_POINTS_VISUALIZER_CFG.replace(
     prim_path="/Visuals/feetVolumePoints",
@@ -98,11 +99,20 @@ FEET_VOLUME_POINTS_VISUALIZER_CFG = VOLUME_POINTS_VISUALIZER_CFG.replace(
 
 # Matches parkour_env_cfg left/right_height_scanner (mesh path adapted for this scene's ground).
 FOOT_HEIGHT_SCANNER_CFG = RayCasterCfg(
-    offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 20.0)),
+    offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
     ray_alignment="yaw",
-    pattern_cfg=patterns.GridPatternCfg(resolution=0.12, size=[0.12, 0.0]),
+    pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.20, 0.03]),
     mesh_prim_paths=["/World/defaultGroundPlane"],
     update_period=0.02,
+    visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(
+        prim_path="/Visuals/RayCaster",
+        markers={
+            "hit": sim_utils.SphereCfg(
+                radius=0.005,  # 改这里，单位米
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+            ),
+        },
+    ),
 )
 
 

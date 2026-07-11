@@ -37,6 +37,7 @@ from robolab.utils.noise import (
     StereoFusionNoiseCfg,
 )
 from robolab.tasks.manager_based.parkour.terrain_generator_cfg import ROUGH_TERRAINS_CFG
+from isaaclab.markers.config import RAY_CASTER_MARKER_CFG
 
 __file_dir__ = os.path.dirname(os.path.realpath(__file__))
 
@@ -84,21 +85,39 @@ class SceneCfg(InteractiveSceneCfg):
     # sensors
     left_height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_ankle_roll_link",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 20.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.12, size=[0.12, 0.0]),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.20, 0.04]),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
         update_period=0.02,
+        visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(
+            prim_path="/Visuals/RayCaster",
+            markers={
+                "hit": sim_utils.SphereCfg(
+                    radius=0.005,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                ),
+            },
+        ),
     )
     right_height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/right_ankle_roll_link",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 20.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.12, size=[0.12, 0.0]),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.20, 0.04]),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
         update_period=0.02,
+        visualizer_cfg=RAY_CASTER_MARKER_CFG.replace(
+            prim_path="/Visuals/RayCaster",
+            markers={
+                "hit": sim_utils.SphereCfg(
+                    radius=0.005,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                ),
+            },
+        ),
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     feet_volume_points = VolumePointsCfg(
@@ -565,7 +584,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
             "left_height_scanner_cfg": SceneEntityCfg("left_height_scanner"),
             "right_height_scanner_cfg": SceneEntityCfg("right_height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
-            "height_offset": 0.053,
+            "height_offset": 0.05,
         },
     )
     sound_suppression = RewTerm(
