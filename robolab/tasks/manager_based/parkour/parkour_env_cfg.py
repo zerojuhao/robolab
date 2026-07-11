@@ -313,7 +313,7 @@ class ObservationsCfg:
     @configclass
     class DiscriminatorCfg(ObsGroup):
         root_local_rot_tan_norm = ObsTerm(func=mdp.root_local_rot_tan_norm)
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        # base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
@@ -332,7 +332,7 @@ class ObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
             self.concatenate_dim = -1
-            self.history_length = 10
+            self.history_length = 8
             self.flatten_history_dim = False
             
     disc: DiscriminatorCfg = DiscriminatorCfg()
@@ -346,13 +346,13 @@ class ObservationsCfg:
                 "flatten_steps_dim": False,
             }
         )
-        ref_root_lin_vel_b = ObsTerm(
-            func=mdp.ref_root_lin_vel_b,
-            params={
-                "animation": "animation",
-                "flatten_steps_dim": False,
-            }
-        )
+        # ref_root_lin_vel_b = ObsTerm(
+        #     func=mdp.ref_root_lin_vel_b,
+        #     params={
+        #         "animation": "animation",
+        #         "flatten_steps_dim": False,
+        #     }
+        # )
         ref_root_ang_vel_b = ObsTerm(
             func=mdp.ref_root_ang_vel_b,
             params={
@@ -395,7 +395,11 @@ class ActionsCfg:
     """Action specifications for the MDP."""
 
     joint_pos = mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=[".*"], scale=0.25, use_default_offset=True
+        asset_name="robot",
+        joint_names=[".*"],
+        scale=0.25,
+        use_default_offset=True,
+        clip={".*": (-10.0, 10.0)},
     )
 
 
@@ -410,7 +414,7 @@ class CommandsCfg:
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
         rel_standing_envs=0.05,
-        straight_target_prob=0.7, # 80% chance to force the target y to 0 for straight walking.
+        straight_target_prob=0.8, # 80% chance to force the target y to 0 for straight walking.
         ranges=mdp.PoseVelocityCommandCfg.Ranges(lin_vel_x=(0.0, 0.0), lin_vel_y=(0.0, 0.0), ang_vel_z=(-1.0, 1.0)),
         random_velocity_terrain=["perlin_rough_x", "perlin_rough_y", "perlin_rough_z", "perlin_rough_stand"],
         velocity_ranges={
@@ -443,19 +447,19 @@ class ParkourRewardsCfg(MultiRewardCfg):
     # Task rewards
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=5.0,
+        weight=3.0,
         params={"command_name": "base_velocity", "std": 0.5},
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=5.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_ang_vel_z_exp, weight=3.0, params={"command_name": "base_velocity", "std": 0.5}
     )
     heading_error = RewTerm(func=mdp.heading_error, weight=-1.0, params={"command_name": "base_velocity"})
     dont_wait = RewTerm(func=mdp.dont_wait, weight=-1.0, params={"command_name": "base_velocity"})
     is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     stand_still = RewTerm(func=mdp.stand_still, weight=-1.0)
-    rpo_thigh_yaw_inward_sym_penalty = RewTerm(func=mdp.rpo_thigh_yaw_inward_sym_penalty, weight=-10.0)
-    rp1_hip_yaw_inward_sym_penalty = RewTerm(func=mdp.rp1_hip_yaw_inward_sym_penalty, weight=-10.0)
+    rpo_thigh_yaw_inward_sym_penalty = RewTerm(func=mdp.rpo_thigh_yaw_inward_sym_penalty, weight=-1.0)
+    rp1_hip_yaw_inward_sym_penalty = RewTerm(func=mdp.rp1_hip_yaw_inward_sym_penalty, weight=-1.0)
 
     # Regularization rewards
     volume_points_penetration_feet = RewTerm(
@@ -464,7 +468,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
         params={
             "sensor_cfg": SceneEntityCfg("feet_volume_points"),
             "enable_terrain_foot_weights": True,
-            "stairs_weight_min": 0.0,
+            "stairs_weight_min": 0.2,
             "stairs_weight_max": 1.0,
             "debug_print_terrain": False,
         },
@@ -505,7 +509,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     joint_deviation_upper_body = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.1,
+        weight=-0.01,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -798,22 +802,22 @@ class EventCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    # terrain_levels = CurrTerm(
-    #     func=mdp.tracking_exp_vel,
-    #     params={
-    #         "lin_vel_threshold": (0.7, 0.9),
-    #         "ang_vel_threshold": (0.0, 0.0),
-    #     },
-    # )
+    terrain_levels = CurrTerm(
+        func=mdp.tracking_exp_vel,
+        params={
+            "lin_vel_threshold": (0.6, 0.9),
+            "ang_vel_threshold": (0.0, 0.0),
+        },
+    )
     volume_points_penetration_weight_feet = CurrTerm(
         func=mdp.modify_rewards_weight,
         params={
             "term_name": "volume_points_penetration_feet",
             "init_weight": -1.0,
-            "final_weight": -50.0,
-            "lin_vel_threshold": (0.7, 0.9),
+            "final_weight": -100.0,
+            "lin_vel_threshold": (0.6, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.1,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
@@ -821,10 +825,10 @@ class CurriculumCfg:
         params={
             "term_name": "volume_points_penetration_knee",
             "init_weight": -1.0,
-            "final_weight": -50.0,
-            "lin_vel_threshold": (0.7, 0.9),
+            "final_weight": -100.0,
+            "lin_vel_threshold": (0.6, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.1,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -833,9 +837,9 @@ class CurriculumCfg:
             "term_name": "feet_stumble",
             "init_weight": -1.0,
             "final_weight": -10.0,
-            "lin_vel_threshold": (0.7, 0.9),
+            "lin_vel_threshold": (0.6, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.1,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -844,9 +848,9 @@ class CurriculumCfg:
             "term_name": "undesired_contacts",
             "init_weight": -1.0,
             "final_weight": -10.0,
-            "lin_vel_threshold": (0.7, 0.9),
+            "lin_vel_threshold": (0.6, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.2,
+            "step_size": 0.1,
         },
     )
 

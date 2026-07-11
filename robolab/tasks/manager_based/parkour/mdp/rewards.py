@@ -344,7 +344,6 @@ def track_lin_vel_xy_exp(
         dim=1,
     )
     reward = torch.exp(-lin_vel_error / std**2)
-    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 1.0) / 1.0
     return reward
 
 
@@ -357,7 +356,6 @@ def track_ang_vel_z_exp(
     # compute the error
     ang_vel_error = torch.square(env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_b[:, 2])
     reward = torch.exp(-ang_vel_error / std**2)
-    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 1.0) / 1.0
     return reward
 
 

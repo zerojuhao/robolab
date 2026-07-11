@@ -54,7 +54,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
     vertical_scale=0.005,
     slope_threshold=1.0,
     use_cache=False,
-    curriculum=False,
+    curriculum=True,
     sub_terrains={
         "perlin_rough": terrain_gen.PerlinPlaneTerrainCfg(
             proportion=0.05,
@@ -143,8 +143,8 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
         ),
         "square_gaps": terrain_gen.PerlinSquareGapTerrainCfg(
             proportion=0.1,
-            gap_distance_range=(0.1, 0.40),
-            gap_depth=(0.4, 0.6),
+            gap_distance_range=(0.1, 0.30),
+            gap_depth=(0.15, 0.5),
             platform_width=2.5,
             border_width=1.0,
             wall_prob=[0.3, 0.3, 0.3, 0.3],
