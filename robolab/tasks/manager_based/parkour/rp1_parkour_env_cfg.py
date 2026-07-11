@@ -122,6 +122,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
 
         self.events.add_base_mass.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["base_link", "waist_yaw_link"])
         self.events.randomize_rigid_body_com.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["base_link", "waist_yaw_link"])
+        self.events.push_robot = None
 
 
 @configclass

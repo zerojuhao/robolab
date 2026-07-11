@@ -85,7 +85,7 @@ class SceneCfg(InteractiveSceneCfg):
     # sensors
     left_height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_ankle_roll_link",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.20, 0.04]),
         debug_vis=False,
@@ -103,7 +103,7 @@ class SceneCfg(InteractiveSceneCfg):
     )
     right_height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/right_ankle_roll_link",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.20, 0.04]),
         debug_vis=False,
@@ -462,11 +462,11 @@ class ParkourRewardsCfg(MultiRewardCfg):
     # Task rewards
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=3.0,
+        weight=5.0,
         params={"command_name": "base_velocity", "std": 0.5},
     )
     track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=3.0, params={"command_name": "base_velocity", "std": 0.5}
+        func=mdp.track_ang_vel_z_exp, weight=5.0, params={"command_name": "base_velocity", "std": 0.5}
     )
     heading_error = RewTerm(func=mdp.heading_error, weight=-1.0, params={"command_name": "base_velocity"})
     dont_wait = RewTerm(func=mdp.dont_wait, weight=-1.0, params={"command_name": "base_velocity"})
@@ -515,7 +515,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_slide = RewTerm(
         func=mdp.contact_slide,
-        weight=-1.0,
+        weight=-0.5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
@@ -804,7 +804,7 @@ class EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity_per_terrain,
         mode="interval",
-        interval_range_s=(5.0, 7.0),
+        interval_range_s=(7.0, 10.0),
         params={
             "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
             "terrain_velocity_ranges": {
