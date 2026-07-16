@@ -12,7 +12,7 @@ from robolab.tasks.manager_based.parkour.mdp.symmetry import rp1
 class RslRlPpoEncoderMoEActorCriticCfg:
     class_name: str = "EncoderMoEActorCritic"
     init_noise_std: float = 1.0
-    num_moe_experts: int = 6
+    num_moe_experts: int = 5
     moe_gate_hidden_dims: list[int] = []
     actor_hidden_dims: list[int] = [256, 128, 64]
     critic_hidden_dims: list[int] = [256, 128, 64]
@@ -41,7 +41,7 @@ class RP1ParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     class_name = "AMPRunner"
     num_steps_per_env = 24
     max_iterations = 30000
-    save_interval = 200
+    save_interval = 500
     experiment_name = "rp1_parkour"
     wandb_project = "rp1_parkour"
     obs_groups = {

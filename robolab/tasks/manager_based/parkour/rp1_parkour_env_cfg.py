@@ -92,13 +92,13 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             "turn_l": 1,
             "turn_r": 1,
             # SEED
-            # "idle_loop_001__A046": 1,
-            # "stairs_climbing_down_loop_R_102__A301_M": 1,
-            # "stairs_climbing_down_stop_R_103__A301": 1,
-            # "stairs_climbing_up_start_R_001__A300": 1,
-            # "walk_arc_cw_loop_001__A048_M": 1,
-            # "walk_arc_cw_loop_001__A048": 1,
-            # "walk_ff_loop_180_R_001__A048": 1,
+            "idle_loop_001__A046": 1,
+            "stairs_climbing_down_loop_R_102__A301_M": 1,
+            "stairs_climbing_down_stop_R_103__A301": 1,
+            "stairs_climbing_up_start_R_001__A300": 1,
+            "walk_arc_cw_loop_001__A048_M": 1,
+            "walk_arc_cw_loop_001__A048": 1,
+            "walk_ff_loop_180_R_001__A048": 1,
         }
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
         self.observations.disc.history_length = AMP_NUM_STEPS
@@ -111,8 +111,6 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         }
 
         self.rewards.rewards.rpo_thigh_yaw_inward_sym_penalty = None
-        # self.rewards.rewards.rp1_hip_yaw_inward_sym_penalty = None
-        self.rewards.rewards.feet_flat_ori = None
         self.rewards.rewards.feet_close_xy_gauss.params["threshold"] = 0.20
         self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint", "waist_.*_joint"])
         self.rewards.rewards.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="waist_yaw_link")
@@ -122,7 +120,6 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
 
         self.events.add_base_mass.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["base_link", "waist_yaw_link"])
         self.events.randomize_rigid_body_com.params["asset_cfg"] = SceneEntityCfg("robot", body_names=["base_link", "waist_yaw_link"])
-        self.events.push_robot = None
 
 
 @configclass

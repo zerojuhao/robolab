@@ -497,7 +497,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_air_time_positive_biped = RewTerm(
         func=mdp.feet_air_time_positive_biped,
-        weight=0.5,
+        weight=5.0,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "command_name": "base_velocity",
@@ -515,7 +515,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_slide = RewTerm(
         func=mdp.contact_slide,
-        weight=-0.5,
+        weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
@@ -524,7 +524,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     joint_deviation_upper_body = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.05,
+        weight=-0.5,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -561,7 +561,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     # flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-3.0)
     pelvis_orientation_l2 = RewTerm(
-        func=mdp.link_orientation, weight=-1.0, params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
+        func=mdp.link_orientation, weight=-6.0, params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
     )
     pelvis_ang_vel_xy_l2 = RewTerm(
         func=mdp.link_ang_vel_xy_l2,
@@ -578,7 +578,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_at_plane = RewTerm(
         func=mdp.feet_at_plane,
-        weight=-1.0,
+        weight=-0.1,
         params={
             "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_ankle_roll_link"),
             "left_height_scanner_cfg": SceneEntityCfg("left_height_scanner"),
@@ -808,7 +808,7 @@ class EventCfg:
         params={
             "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
             "terrain_velocity_ranges": {
-                "stairs": {"x": (0.0, 0.5), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
+                "stairs": {"x": (0.0, 0.5), "y": (-0.5, 0.5), "yaw": (-0.5, 0.5)},
             },
         },
     )
@@ -832,7 +832,7 @@ class CurriculumCfg:
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.1,
         },
     )
     volume_points_penetration_weight_knee = CurrTerm(
@@ -843,7 +843,7 @@ class CurriculumCfg:
             "final_weight": -100.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.1,
         },
     )
     feet_stumble_weight = CurrTerm(
@@ -854,7 +854,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.1,
         },
     )
     undesired_contacts_weight = CurrTerm(
@@ -865,7 +865,7 @@ class CurriculumCfg:
             "final_weight": -10.0,
             "lin_vel_threshold": (0.7, 0.9),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.1,
         },
     )
 
