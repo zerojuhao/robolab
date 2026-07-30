@@ -216,7 +216,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
         ),
         "platforms": terrain_gen.PerlinPlatformsTerrainCfg(
             proportion=0.1,
-            platform_height_range=(0.05, 0.3),
+            platform_height_range=(0.05, 0.2),
             band_width=0.6,
             center_width=2.0,
             border_width=0.5,

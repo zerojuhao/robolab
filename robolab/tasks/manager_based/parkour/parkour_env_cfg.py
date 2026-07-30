@@ -759,7 +759,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
             "left_height_scanner_cfg": SceneEntityCfg("left_height_scanner"),
             "right_height_scanner_cfg": SceneEntityCfg("right_height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
-            "height_offset": 0.045,
+            "height_offset": 0.03,
             "height_tolerance": 0.03,
             "transition_width": 0.005,
             "enable_terrain_foot_weights": True,
@@ -1000,7 +1000,7 @@ class CurriculumCfg:
     terrain_levels = CurrTerm(
         func=mdp.tracking_exp_vel,
         params={
-            "lin_vel_threshold": (0.7, 0.8),
+            "lin_vel_threshold": (0.6, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
         },
     )
@@ -1010,9 +1010,9 @@ class CurriculumCfg:
             "term_name": "imagined_foothold_guidance",
             "init_weight": -1.0,
             "final_weight": -10.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.1,
         },
     )
     imagined_foothold_edge_penetration_weight = CurrTerm(
@@ -1021,9 +1021,9 @@ class CurriculumCfg:
             "term_name": "imagined_foothold_edge_penetration",
             "init_weight": -1.0,
             "final_weight": -10.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
-            "step_size": 0.05,
+            "step_size": 0.1,
         },
     )
     feet_at_plane_weight = CurrTerm(
@@ -1032,7 +1032,7 @@ class CurriculumCfg:
             "term_name": "feet_at_plane",
             "init_weight": -1.0,
             "final_weight": -10.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
             "step_size": 0.1,
         },
@@ -1043,7 +1043,7 @@ class CurriculumCfg:
             "term_name": "volume_points_penetration_feet",
             "init_weight": -1.0,
             "final_weight": -100.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
             "step_size": 0.1,
         },
@@ -1054,7 +1054,7 @@ class CurriculumCfg:
             "term_name": "volume_points_penetration_knee",
             "init_weight": -1.0,
             "final_weight": -100.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
             "step_size": 0.1,
         },
@@ -1064,8 +1064,8 @@ class CurriculumCfg:
         params={
             "term_name": "feet_stumble",
             "init_weight": -1.0,
-            "final_weight": -10.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "final_weight": -100.0,
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
             "step_size": 0.1,
         },
@@ -1076,7 +1076,7 @@ class CurriculumCfg:
             "term_name": "undesired_contacts",
             "init_weight": -1.0,
             "final_weight": -10.0,
-            "lin_vel_threshold": (0.8, 0.9),
+            "lin_vel_threshold": (0.7, 0.8),
             "ang_vel_threshold": (0.0, 0.0),
             "step_size": 0.1,
         },

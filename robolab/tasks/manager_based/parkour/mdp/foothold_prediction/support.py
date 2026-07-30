@@ -112,25 +112,6 @@ class FootholdSupportEvaluator:
             .values
         )
 
-    def _point_support_from_heights(self, heights: torch.Tensor) -> torch.Tensor:
-        """Per-sole-point support in ``[0, 1]`` (invalid rays → 0)."""
-        if heights.shape[-1] == 0:
-            return torch.zeros_like(heights)
-        valid = torch.isfinite(heights)
-        support_plane = self._support_plane_from_heights(heights)
-        safe_heights = torch.where(valid, heights, support_plane.unsqueeze(-1))
-        gap = support_plane.unsqueeze(-1) - safe_heights
-        width = max(float(self.cfg.support_transition_width), 1.0e-6)
-        support = torch.sigmoid((self.cfg.height_tolerance - gap) / width)
-        return _masked_zero(support, valid)
-
-    def _support_ratio_from_heights(self, heights: torch.Tensor) -> torch.Tensor:
-        if heights.shape[-1] == 0:
-            return torch.zeros(
-                heights.shape[:-1], device=heights.device, dtype=heights.dtype
-            )
-        return self._point_support_from_heights(heights).mean(dim=-1)
-
     def _sole_terrain_point_weights(
         self,
         foot_ids: torch.Tensor,
@@ -369,13 +350,13 @@ class FootholdSupportEvaluator:
             best_probabilities,
             best_deficiency,
         )
-    def contact_support_ratio(
+    def _contact_terrain_heights(
         self,
         foot_pos_w: torch.Tensor,
         foot_yaws: torch.Tensor,
         foot_ids: torch.Tensor,
     ) -> torch.Tensor:
-        """Measure mean terrain support under each real foot position."""
+        """Raycast sole-pattern terrain heights at real foot poses."""
         offsets_w = self._sole_offsets_w(foot_ids, foot_yaws)
         ray_starts = torch.zeros(
             foot_pos_w.shape[0], offsets_w.shape[1], 3, device=self.device
@@ -391,7 +372,27 @@ class FootholdSupportEvaluator:
             mesh=self.terrain_mesh,
             max_dist=self.cfg.ray_max_distance,
         )
-        return self._support_ratio_from_heights(ray_hits[..., 2])
+        return ray_hits[..., 2]
+
+    def contact_support_ratio(
+        self,
+        foot_pos_w: torch.Tensor,
+        foot_yaws: torch.Tensor,
+        foot_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Mean per-foot support using the ``feet_at_plane`` clearance kernel (uniform sole weights)."""
+        terrain_heights = self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids)
+        unsupported = _finite_or_zero(
+            soft_absolute_clearance_unsupported(
+                foot_pos_w[:, 2].unsqueeze(-1),
+                terrain_heights,
+                height_offset=self.cfg.height_offset,
+                height_tolerance=self.cfg.height_tolerance,
+                transition_width=self.cfg.support_transition_width,
+                point_weights=None,
+            )
+        )
+        return 1.0 - unsupported
 
     def contact_unsupported_penalty(
         self,
@@ -404,30 +405,19 @@ class FootholdSupportEvaluator:
         stairs_weight_max: float = 1.0,
     ) -> torch.Tensor:
         """Absolute soft clearance unsupported fraction at real foot poses (``[0, 1]``)."""
-        offsets_w = self._sole_offsets_w(foot_ids, foot_yaws)
-        ray_starts = torch.zeros(
-            foot_pos_w.shape[0], offsets_w.shape[1], 3, device=self.device
-        )
-        ray_starts[..., :2] = foot_pos_w[:, None, :2] + offsets_w
-        ray_starts[..., 2] = foot_pos_w[:, None, 2] + self.cfg.ray_start_height
-        ray_directions = torch.zeros_like(ray_starts)
-        ray_directions[..., 2] = -1.0
-
-        ray_hits, _, _, _ = raycast_mesh(
-            ray_starts,
-            ray_directions,
-            mesh=self.terrain_mesh,
-            max_dist=self.cfg.ray_max_distance,
-        )
+        terrain_heights = self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids)
         point_w = None
         if enable_terrain_foot_weights:
             point_w = self._sole_terrain_point_weights(
-                foot_ids, family_ids, stairs_weight_min, stairs_weight_max
+                foot_ids,
+                family_ids,
+                stairs_weight_min,
+                stairs_weight_max,
             )
         return _finite_or_zero(
             soft_absolute_clearance_unsupported(
                 foot_pos_w[:, 2].unsqueeze(-1),
-                ray_hits[..., 2],
+                terrain_heights,
                 height_offset=self.cfg.height_offset,
                 height_tolerance=self.cfg.height_tolerance,
                 transition_width=self.cfg.support_transition_width,

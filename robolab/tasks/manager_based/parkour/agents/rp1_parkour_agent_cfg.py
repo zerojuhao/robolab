@@ -65,7 +65,7 @@ class RP1ParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
             # Reach extents must be integer multiples of resolution (1.2/0.03, 0.9/0.03).
             resolution=0.03,
             reach_center=(0.0, 0.15),
-            reach_radii=(0.6, 0.3),
+            reach_radii=(0.6, 0.4),
             reward_quality_top_k=64,
             reward_quality_eval_chunk_size=64,
             reward_unselected_mass_penalty=1.0,
