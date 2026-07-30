@@ -6,19 +6,17 @@ import torch
 
 
 class ReachableFootholdGrid:
-    """Build a mirrored per-foot reachable mask over a shared XY grid."""
+    """Build a compact per-foot reachable grid over a shared XY lattice.
+
+    Lattice axes span the tight bounding box of the mirrored reach ellipses.
+    Only cells inside at least one foot ellipse are retained; the network
+    predicts logits directly over this compact set.
+    """
 
     def __init__(self, cfg, device: torch.device | str) -> None:
         self.cfg = cfg
         self.device = device
         self._validate_cfg()
-
-        self.x_values = self._axis_values(cfg.x_range, cfg.resolution)
-        self.y_values = self._axis_values(cfg.y_range, cfg.resolution)
-        self.num_x = int(self.x_values.numel())
-        self.num_y = int(self.y_values.numel())
-        self.points = torch.cartesian_prod(self.x_values, self.y_values)
-        self.num_cells = self.points.shape[0]
 
         center_x, center_y = cfg.reach_center
         radius_x, radius_y = cfg.reach_radii
@@ -30,10 +28,37 @@ class ReachableFootholdGrid:
         self.reach_radii = torch.tensor(
             (radius_x, radius_y), dtype=torch.float32, device=device
         )
+
+        x_range, y_range = self._tight_bbox(center_x, center_y, radius_x, radius_y)
+        self.x_range = x_range
+        self.y_range = y_range
+        self.x_values = self._axis_values(x_range, cfg.resolution)
+        self.y_values = self._axis_values(y_range, cfg.resolution)
+        self.num_x = int(self.x_values.numel())
+        self.num_y = int(self.y_values.numel())
+
+        lattice_points = torch.cartesian_prod(self.x_values, self.y_values)
         normalized_offsets = (
-            self.points.unsqueeze(0) - self.reach_centers.unsqueeze(1)
+            lattice_points.unsqueeze(0) - self.reach_centers.unsqueeze(1)
         ) / self.reach_radii
-        self.reachable_mask = normalized_offsets.square().sum(dim=-1) <= 1.0
+        lattice_reachable_mask = normalized_offsets.square().sum(dim=-1) <= 1.0
+        union_mask = lattice_reachable_mask.any(dim=0)
+
+        self.points = lattice_points[union_mask]
+        self.reachable_mask = lattice_reachable_mask[:, union_mask]
+        self.num_cells = int(self.points.shape[0])
+
+        lattice_indices = union_mask.nonzero(as_tuple=False).squeeze(-1)
+        self._lattice_ix = lattice_indices // self.num_y
+        self._lattice_iy = lattice_indices % self.num_y
+
+        lattice_to_compact = torch.full(
+            (lattice_points.shape[0],), -1, dtype=torch.long, device=device
+        )
+        lattice_to_compact[union_mask] = torch.arange(
+            self.num_cells, device=device, dtype=torch.long
+        )
+        self._lattice_to_compact = lattice_to_compact
 
         reachable_counts = self.reachable_mask.sum(dim=-1)
         min_reachable = int(reachable_counts.min().item())
@@ -62,18 +87,45 @@ class ReachableFootholdGrid:
 
         self._build_neighbor_tables()
 
+    @staticmethod
+    def _tight_bbox(
+        center_x: float,
+        center_y: float,
+        radius_x: float,
+        radius_y: float,
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Return the axis-aligned bbox covering both mirrored reach ellipses."""
+        x_range = (center_x - radius_x, center_x + radius_x)
+        y_lo = min(-center_y - radius_y, center_y - radius_y)
+        y_hi = max(-center_y + radius_y, center_y + radius_y)
+        return x_range, (y_lo, y_hi)
+
     def _validate_cfg(self) -> None:
         if self.cfg.resolution <= 0.0:
             raise ValueError("Foothold grid resolution must be positive.")
-        if self.cfg.x_range[0] >= self.cfg.x_range[1]:
-            raise ValueError("Foothold grid x_range must be increasing.")
-        if self.cfg.y_range[0] >= self.cfg.y_range[1]:
-            raise ValueError("Foothold grid y_range must be increasing.")
         if min(self.cfg.reach_radii) <= 0.0:
             raise ValueError("Foothold reach radii must be positive.")
         residual_span = float(getattr(self.cfg, "residual_span_cells", 0.5))
         if residual_span <= 0.0:
             raise ValueError("Foothold residual_span_cells must be positive.")
+
+        center_x, center_y = self.cfg.reach_center
+        radius_x, radius_y = self.cfg.reach_radii
+        x_range, y_range = self._tight_bbox(center_x, center_y, radius_x, radius_y)
+        if x_range[0] >= x_range[1]:
+            raise ValueError("Foothold reach ellipse x extent must be positive.")
+        if y_range[0] >= y_range[1]:
+            raise ValueError("Foothold reach ellipse y extent must be positive.")
+
+        resolution = float(self.cfg.resolution)
+        for axis_name, axis_range in (("x", x_range), ("y", y_range)):
+            span_in_cells = (axis_range[1] - axis_range[0]) / resolution
+            num_intervals = round(span_in_cells)
+            if abs(span_in_cells - num_intervals) > 1.0e-5:
+                raise ValueError(
+                    f"Reach ellipse {axis_name} extent {axis_range} must be "
+                    f"divisible by resolution {resolution}."
+                )
 
     def _axis_values(
         self, value_range: tuple[float, float], resolution: float
@@ -92,27 +144,29 @@ class ReachableFootholdGrid:
         )
 
     def _build_neighbor_tables(self) -> None:
-        """Precompute self + 4-connected neighbor indices for residual supervision."""
-        # cartesian_prod(x, y) lays out as ix-major: index = ix * num_y + iy.
-        cell_ids = torch.arange(self.num_cells, device=self.device)
-        ix = cell_ids // self.num_y
-        iy = cell_ids % self.num_y
+        """Precompute self + 4-connected compact neighbor indices."""
         offsets = ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1))
         neighbor_indices = []
         neighbor_valid = []
         for dx, dy in offsets:
-            nix = ix + dx
-            niy = iy + dy
-            valid = (nix >= 0) & (nix < self.num_x) & (niy >= 0) & (niy < self.num_y)
-            indices = (nix * self.num_y + niy).clamp(min=0, max=self.num_cells - 1)
-            neighbor_indices.append(indices)
+            nix = self._lattice_ix + dx
+            niy = self._lattice_iy + dy
+            on_lattice = (
+                (nix >= 0)
+                & (nix < self.num_x)
+                & (niy >= 0)
+                & (niy < self.num_y)
+            )
+            lattice_neighbor_ids = nix * self.num_y + niy
+            compact_ids = self._lattice_to_compact.gather(0, lattice_neighbor_ids)
+            valid = on_lattice & (compact_ids >= 0)
+            neighbor_indices.append(torch.where(valid, compact_ids, torch.zeros_like(compact_ids)))
             neighbor_valid.append(valid)
-        # [num_cells, 5]
         self.neighbor_indices = torch.stack(neighbor_indices, dim=-1)
         self.neighbor_valid = torch.stack(neighbor_valid, dim=-1)
 
     def masked_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        """Set unreachable grid logits to the lowest representable value."""
+        """Set per-foot unreachable logits to the lowest representable value."""
         if logits.shape[-2:] != (2, self.num_cells):
             raise ValueError(
                 "Foothold logits must have trailing shape "
@@ -148,17 +202,11 @@ class ReachableFootholdGrid:
         in_ellipse = ((targets - centers) / self.reach_radii).square().sum(
             dim=-1
         ) <= 1.0
-        in_bounds = (
-            (targets[:, 0] >= self.cfg.x_range[0])
-            & (targets[:, 0] <= self.cfg.x_range[1])
-            & (targets[:, 1] >= self.cfg.y_range[0])
-            & (targets[:, 1] <= self.cfg.y_range[1])
-        )
         target_residuals = targets - self.points[indices]
         residual_encodable = (target_residuals.abs() <= self.max_residual + 1.0e-6).all(
             dim=-1
         )
-        return indices, in_ellipse & in_bounds & residual_encodable
+        return indices, in_ellipse & residual_encodable
 
     def mode_xy(
         self, probabilities: torch.Tensor, residuals: torch.Tensor
@@ -169,16 +217,14 @@ class ReachableFootholdGrid:
         return self.points[indices] + residuals[batch_ids, indices]
 
     def cell_xy_indices(self, cell_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Decode flat cell ids into (ix, iy) on the shared XY lattice."""
-        return cell_ids // self.num_y, cell_ids % self.num_y
+        """Decode compact cell ids into (ix, iy) on the underlying lattice."""
+        return self._lattice_ix[cell_ids], self._lattice_iy[cell_ids]
 
     @property
     def signature(self) -> tuple:
         """Serializable geometry signature used for checkpoint compatibility."""
         return (
-            "categorical_xy_residual_v2",
-            tuple(self.cfg.x_range),
-            tuple(self.cfg.y_range),
+            "categorical_xy_residual_v3",
             float(self.cfg.resolution),
             tuple(self.cfg.reach_center),
             tuple(self.cfg.reach_radii),

@@ -62,9 +62,7 @@ class RP1ParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         weight_decay=1.0e-5,
         ema_decay=0.99,
         grid=FootholdGridCfg(
-            # Ranges must be integer multiples of resolution (1.38/0.03, 1.02/0.03).
-            x_range=(-0.69, 0.69),
-            y_range=(-0.51, 0.51),
+            # Reach extents must be integer multiples of resolution (1.2/0.03, 0.9/0.03).
             resolution=0.03,
             reach_center=(0.0, 0.15),
             reach_radii=(0.6, 0.3),

@@ -10,10 +10,13 @@ from isaaclab.utils import configclass
 
 @configclass
 class FootholdGridCfg:
-    """Discrete base-frame grid and static reachable region for both feet."""
+    """Compact reachable-region grid in the robot base frame for both feet.
 
-    x_range: tuple[float, float] = MISSING
-    y_range: tuple[float, float] = MISSING
+    Lattice points are generated inside the tight bounding box of the mirrored
+    reach ellipses; only cells that fall inside at least one foot ellipse are
+    retained.  The network predicts logits over this compact set directly.
+    """
+
     resolution: float = MISSING
     reach_center: tuple[float, float] = MISSING
     reach_radii: tuple[float, float] = MISSING
