@@ -22,19 +22,19 @@ KEY_BODY_NAMES = [
 ]
 
 RPO_CFG.init_state.pos = (0.0, 0.0, 0.85)
-AMP_NUM_STEPS = 8
+AMP_NUM_STEPS = 3
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
-    x_min=-0.05,
-    x_max=0.10,
-    x_num=16,
-    y_min=-0.035,
-    y_max=0.035,
-    y_num=8,
-    z_min=-0.04,
+    x_min=-0.08,
+    x_max=0.11,
+    x_num=20,
+    y_min=-0.025,
+    y_max=0.025,
+    y_num=6,
+    z_min=-0.05,
     z_max=-0.02,
-    z_num=3,
+    z_num=4,
 )
 KNEE_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     x_min=-0.03,

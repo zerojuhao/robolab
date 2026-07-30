@@ -144,7 +144,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
         "square_gaps": terrain_gen.PerlinSquareGapTerrainCfg(
             proportion=0.1,
             gap_distance_range=(0.1, 0.4),
-            gap_depth=(0.4, 0.6),
+            gap_depth=(0.2, 0.6),
             platform_width=2.5,
             border_width=1.0,
             wall_prob=[0.3, 0.3, 0.3, 0.3],
@@ -204,6 +204,25 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
                 fractal_gain=0.25,
                 centering=True,
             ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50,
+                    patch_radius=[0.05, 0.10, 0.15, 0.20],
+                    max_height_diff=0.05,
+                    x_range=(3.7, 3.7),
+                    y_range=(-3.5, 3.5),
+                ),
+            },
+        ),
+        "concentric_square_platforms": terrain_gen.PerlinConcentricSquarePlatformsTerrainCfg(
+            proportion=0.1,
+            platform_height_range=(0.05, 0.4),
+            band_width=0.5,
+            center_width=2.0,
+            border_width=0.5,
+            wall_prob=[0.3, 0.3, 0.3, 0.3],
+            wall_height=5.0,
+            wall_thickness=0.05,
             flat_patch_sampling={
                 "target": FlatPatchSamplingCfg(
                     num_patches=50,

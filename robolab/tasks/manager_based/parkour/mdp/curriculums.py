@@ -57,7 +57,7 @@ def tracking_exp_vel(
 def modify_rewards_weight(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
-    term_name: str,
+    term_name: str | Sequence[str],
     init_weight: float,
     final_weight: float,
     lin_vel_threshold: tuple = (0.3, 0.6),
@@ -73,7 +73,8 @@ def modify_rewards_weight(
     Args:
         env: The learning environment.
         env_ids: The environment ids for which the curriculum should be computed.
-        term_name: Name of the reward term whose weight will be modified.
+        term_name: Name of the reward term (or list of names updated together) whose weight
+            will be modified.
         init_weight: Initial (easy) weight of the reward term.
         final_weight: Final (strict) weight to ramp toward when tracking is good.
         lin_vel_threshold: A tuple specifying the lower and upper threshold for the linear
@@ -102,28 +103,33 @@ def modify_rewards_weight(
     move_down = tracking_exp_vel_xy < lin_vel_threshold[0]
     move_down *= ~move_up
 
-    # update per-environment weights for the specified envs only
-    per_env_weights = env.reward_manager.get_per_env_term_weights(term_name)
-    # normalize env_ids to tensor for indexing
-    if not isinstance(env_ids, torch.Tensor):
-        env_idx = torch.tensor(list(env_ids), dtype=torch.long, device=per_env_weights.device)
-    else:
-        env_idx = env_ids.to(device=per_env_weights.device)
-    current = per_env_weights[env_idx]
-    # move_up and move_down are boolean tensors aligned with env_ids
-    move_up = move_up.to(dtype=current.dtype, device=current.device)
-    move_down = move_down.to(dtype=current.dtype, device=current.device)
-    # fixed absolute step: fraction of the full init->final range
+    term_names = [term_name] if isinstance(term_name, str) else list(term_name)
     abs_step = (final_weight - init_weight) * step_size
-    current = current + abs_step * move_up
-    current = current - abs_step * move_down
     weight_min = min(init_weight, final_weight)
     weight_max = max(init_weight, final_weight)
-    current = torch.clamp(current, weight_min, weight_max)
-    # write back only for these envs
-    env.reward_manager.set_term_weight_for_envs(term_name, env_idx, current)
+    logged_mean = None
+    for name in term_names:
+        # update per-environment weights for the specified envs only
+        per_env_weights = env.reward_manager.get_per_env_term_weights(name)
+        # normalize env_ids to tensor for indexing
+        if not isinstance(env_ids, torch.Tensor):
+            env_idx = torch.tensor(list(env_ids), dtype=torch.long, device=per_env_weights.device)
+        else:
+            env_idx = env_ids.to(device=per_env_weights.device)
+        current = per_env_weights[env_idx]
+        # move_up and move_down are boolean tensors aligned with env_ids
+        move_up_f = move_up.to(dtype=current.dtype, device=current.device)
+        move_down_f = move_down.to(dtype=current.dtype, device=current.device)
+        # fixed absolute step: fraction of the full init->final range
+        current = current + abs_step * move_up_f
+        current = current - abs_step * move_down_f
+        current = torch.clamp(current, weight_min, weight_max)
+        # write back only for these envs
+        env.reward_manager.set_term_weight_for_envs(name, env_idx, current)
 
-    # Log the global mean so the curve reflects the full population, not only the reset batch.
-    global_weights = env.reward_manager.get_per_env_term_weights(term_name)
-    return global_weights.mean()
+        # Log the global mean so the curve reflects the full population, not only the reset batch.
+        global_weights = env.reward_manager.get_per_env_term_weights(name)
+        if logged_mean is None:
+            logged_mean = global_weights.mean()
+    return logged_mean
 

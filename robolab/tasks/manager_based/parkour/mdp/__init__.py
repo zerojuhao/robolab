@@ -5,5 +5,7 @@ from .terminations import *
 from .events import *
 from .curriculums import *
 from .randomization import *
-from .terrain import *  
+from .terrain import *
+from .foothold_imagination import *
+from .terrain_family import *
 from .commands import *

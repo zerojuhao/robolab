@@ -61,6 +61,27 @@ class PerlinInvertedPyramidStairsTerrainCfg(HfInvertedPyramidStairsTerrainCfg, W
 
 
 @configclass
+class PerlinConcentricSquarePlatformsTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
+    """Concentric square platform rings alternating with flat ground."""
+
+    function = hf_terrains.perlin_concentric_square_platforms_terrain
+
+    platform_height_range: tuple[float, float] = (0.05, 0.4)
+    """Raised-ring height range in meters, interpolated by terrain difficulty."""
+
+    band_width: float = 0.5
+    """Width of every raised or flat square ring in meters."""
+
+    center_width: float = 2.0
+    """Width of the square flat region at the terrain center in meters."""
+
+    border_width: float = 0.5
+    """Flat margin retained at the terrain border in meters."""
+
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
 class PerlinTrapezoidStairsTerrainCfg(HfPyramidStairsTerrainCfg, WallTerrainCfgMixin):
     """Trapezoid stairs along y-axis: only +y/-y faces have steps, full width along x."""
 

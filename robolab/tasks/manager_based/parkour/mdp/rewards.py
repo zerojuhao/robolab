@@ -12,6 +12,14 @@ from robolab.sensors.volume_points import VolumePoints
 from robolab.sensors.volume_points.points_generator import grid3d_points_generator
 from robolab.sensors.volume_points.points_generator_cfg import Grid3dPointsGeneratorCfg
 
+from .terrain_family import (
+    STAIRS_DOWN_FAMILY_ID,
+    STAIRS_UP_FAMILY_ID,
+    get_terrain_family_ids,
+    soft_absolute_clearance_unsupported,
+    terrain_foot_point_weights,
+)
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -254,10 +262,14 @@ def dont_wait(
 
     return lin_penalty.sum(dim=1) + ang_penalty
 
+
 def feet_orientation_contact(
-    env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    enabled_terrain_family_ids: tuple[int, ...] | None = None,
 ) -> torch.Tensor:
-    """Reward feet being oriented vertically when in contact with the ground."""
+    """Penalize non-flat contacting feet on the selected terrain families."""
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     left_quat = asset.data.body_quat_w[:, asset_cfg.body_ids[0], :]
@@ -268,10 +280,18 @@ def feet_orientation_contact(
     net_contact_forces = contact_sensor.data.net_forces_w_history
     is_contact = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0] > 1
 
-    return (
+    penalty = (
         torch.sum(torch.square(left_projected_gravity[:, :2]), dim=-1) ** 0.5 * is_contact[:, 0]
         + torch.sum(torch.square(right_projected_gravity[:, :2]), dim=-1) ** 0.5 * is_contact[:, 1]
     )
+    if enabled_terrain_family_ids is None:
+        return penalty
+
+    family_ids = get_terrain_family_ids(env)
+    enabled = torch.zeros_like(family_ids, dtype=torch.bool)
+    for family_id in enabled_terrain_family_ids:
+        enabled |= family_ids == family_id
+    return penalty * enabled
 
 
 def feet_at_plane(
@@ -280,31 +300,70 @@ def feet_at_plane(
     left_height_scanner_cfg: SceneEntityCfg,
     right_height_scanner_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    height_offset=0.035,
+    height_offset: float = 0.03,
+    height_tolerance: float = 0.03,
+    transition_width: float = 0.005,
+    enable_terrain_foot_weights: bool = True,
+    stairs_weight_min: float = 0.0,
+    stairs_weight_max: float = 1.0,
 ) -> torch.Tensor:
-    """Reward feet being at certain height above the ground plane."""
-    # extract the used quantities (to enable type-hinting)
+    """Penalize contacting feet that remain above their local terrain support.
+
+    Uses soft absolute clearance (same kernel as swing ``imagined_foothold_guidance``)
+    with optional terrain-dependent toe/heel/mid sole-point weights. Returns the sum
+    over contacting feet of a weighted-mean unsupported fraction in roughly ``[0, 2]``.
+    """
     asset: RigidObject = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
     net_contact_forces = contact_sensor.data.net_forces_w_history
-    is_contact = torch.max(torch.norm(net_contact_forces[:, :, contact_sensor_cfg.body_ids], dim=-1), dim=1)[0] > 1
-    left_sensor = env.scene[left_height_scanner_cfg.name]
-    left_sensor_data = left_sensor.data.ray_hits_w[..., 2]
-    left_sensor_data = torch.where(torch.isinf(left_sensor_data), 0.0, left_sensor_data)
-    right_sensor = env.scene[right_height_scanner_cfg.name]
-    right_sensor_data = right_sensor.data.ray_hits_w[..., 2]
-    right_sensor_data = torch.where(torch.isinf(right_sensor_data), 0.0, right_sensor_data)
-    left_height = asset.data.body_pos_w[:, asset_cfg.body_ids[0], 2]
-    right_height = asset.data.body_pos_w[:, asset_cfg.body_ids[1], 2]
+    is_contact = (
+        torch.max(
+            torch.norm(
+                net_contact_forces[:, :, contact_sensor_cfg.body_ids], dim=-1
+            ),
+            dim=1,
+        ).values
+        > 1.0
+    )
 
-    left_reward = (
-        torch.clamp(left_height.unsqueeze(-1) - left_sensor_data - height_offset, min=0.0, max=0.3) * is_contact[:, 0:1]
+    left_scanner = env.scene.sensors[left_height_scanner_cfg.name]
+    right_scanner = env.scene.sensors[right_height_scanner_cfg.name]
+    terrain_heights = torch.stack(
+        (
+            left_scanner.data.ray_hits_w[..., 2],
+            right_scanner.data.ray_hits_w[..., 2],
+        ),
+        dim=1,
+    )  # (N, 2, P)
+    foot_heights = asset.data.body_pos_w[:, asset_cfg.body_ids, 2].unsqueeze(-1)
+
+    point_weights = None
+    if enable_terrain_foot_weights:
+        family_ids = get_terrain_family_ids(env)
+        # Ray starts are in the sensor/body frame (offset already applied); x = heel→toe.
+        left_x = left_scanner.ray_starts[0, :, 0]
+        right_x = right_scanner.ray_starts[0, :, 0]
+        point_weights = torch.stack(
+            (
+                terrain_foot_point_weights(
+                    left_x, family_ids, stairs_weight_min, stairs_weight_max
+                ),
+                terrain_foot_point_weights(
+                    right_x, family_ids, stairs_weight_min, stairs_weight_max
+                ),
+            ),
+            dim=1,
+        )  # (N, 2, P)
+
+    per_foot = soft_absolute_clearance_unsupported(
+        foot_heights,
+        terrain_heights,
+        height_offset=height_offset,
+        height_tolerance=height_tolerance,
+        transition_width=transition_width,
+        point_weights=point_weights,
     )
-    right_reward = (
-        torch.clamp(right_height.unsqueeze(-1) - right_sensor_data - height_offset, min=0.0, max=0.3)
-        * is_contact[:, 1:2]
-    )
-    return torch.sum(left_reward, dim=-1) + torch.sum(right_reward, dim=-1)
+    return torch.sum(per_foot * is_contact, dim=-1)
 
 
 def link_orientation(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -329,7 +388,7 @@ def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Te
     forces_z = torch.abs(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2])
     forces_xy = torch.linalg.norm(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :2], dim=2)
     # Penalize feet hitting vertical surfaces
-    reward = torch.any(forces_xy > 2 * forces_z, dim=1).float()
+    reward = torch.any(forces_xy > 1 * forces_z, dim=1).float()
     return reward
 
 def track_lin_vel_xy_exp(
@@ -344,7 +403,6 @@ def track_lin_vel_xy_exp(
         dim=1,
     )
     reward = torch.exp(-lin_vel_error / std**2)
-    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 1.0) / 1.0
     return reward
 
 
@@ -357,7 +415,6 @@ def track_ang_vel_z_exp(
     # compute the error
     ang_vel_error = torch.square(env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_b[:, 2])
     reward = torch.exp(-ang_vel_error / std**2)
-    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 1.0) / 1.0
     return reward
 
 
@@ -412,58 +469,33 @@ def volume_points_penetration_feet(
     if enable_terrain_foot_weights:
         terrain = env.scene.terrain
         if terrain.cfg.terrain_type == "generator":
-            gen_cfg = terrain.cfg.terrain_generator
-            sub_names = list(gen_cfg.sub_terrains.keys())
-            terrain_gen = getattr(terrain, "terrain_generator", None)
-            if terrain_gen is None or not hasattr(terrain_gen, "get_subterrain_indices"):
-                raise RuntimeError(
-                    "terrain_generator with subterrain_index_grid is required for enable_terrain_foot_weights. "
-                    "Use robolab.terrains.TerrainImporter with terrain_type='generator' and FiledTerrainGeneratorCfg."
-                )
-            sub_idx_per_env = terrain_gen.get_subterrain_indices(
-                terrain.terrain_levels, terrain.terrain_types, device=env.device
-            )
+            family_ids = get_terrain_family_ids(env)
 
             if debug_print_terrain:
-                for i in range(num_envs):
-                    name = sub_names[sub_idx_per_env[i].item()]
-                    if "pyramid_stairs_inv" in name:
+                for env_id, family_id in enumerate(family_ids.tolist()):
+                    if family_id == STAIRS_UP_FAMILY_ID:
                         label = "up"
-                    elif "pyramid_stairs" in name and "inv" not in name:
+                    elif family_id == STAIRS_DOWN_FAMILY_ID:
                         label = "down"
                     else:
                         label = "other"
-                    print(f"env {i}: {label}, {name}")
-
-            mask_up = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
-            mask_down = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
-            for sub_idx, name in enumerate(sub_names):
-                if "pyramid_stairs_inv" in name:
-                    mask_up |= sub_idx_per_env == sub_idx
-                elif "pyramid_stairs" in name and "inv" not in name:
-                    mask_down |= sub_idx_per_env == sub_idx
+                    print(f"env {env_id}: {label}, family_id={family_id}")
 
             points_cfg = volume_sensor.cfg.points_generator
             local_points = grid3d_points_generator(points_cfg).to(env.device)
-            x_frac = (local_points[:, 0] - points_cfg.x_min) / (points_cfg.x_max - points_cfg.x_min + 1e-8)
-            x_frac = x_frac.clamp(0.0, 1.0)
-            weight_span = stairs_weight_max - stairs_weight_min
-            w_toe_heavy = stairs_weight_min + weight_span * x_frac
-            w_heel_heavy = stairs_weight_max - weight_span * x_frac
-            w_mid_heavy = stairs_weight_min + weight_span * (1.0 - torch.abs(2.0 * x_frac - 1.0))
-            
-            w_toe_heavy = 2 * w_toe_heavy ** 2
-            w_heel_heavy = 2 * w_heel_heavy ** 2
-            w_mid_heavy = 2 * w_mid_heavy ** 2
-            
-            env_w = w_mid_heavy.unsqueeze(0).repeat(num_envs, 1)
-            if mask_up.any():
-                env_w[mask_up] = w_toe_heavy.unsqueeze(0)
-            if mask_down.any():
-                env_w[mask_down] = w_heel_heavy.unsqueeze(0)
+            env_w = terrain_foot_point_weights(
+                local_points[:, 0],
+                family_ids,
+                stairs_weight_min,
+                stairs_weight_max,
+            )
 
-            velocity_times_penetration = velocity_times_penetration.view(num_envs, num_bodies, num_points)
-            velocity_times_penetration = velocity_times_penetration * env_w.unsqueeze(1)
+            velocity_times_penetration = velocity_times_penetration.view(
+                num_envs, num_bodies, num_points
+            )
+            velocity_times_penetration = (
+                velocity_times_penetration * env_w.unsqueeze(1)
+            )
             velocity_times_penetration = velocity_times_penetration.flatten(1, 2)
 
     return torch.sum(velocity_times_penetration, dim=-1)

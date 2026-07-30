@@ -183,8 +183,8 @@ Isaac Lab joint ordering for RP1 (BFS):
     'right_ankle_roll_joint',    # 19
     'left_elbow_joint',          # 20
     'right_elbow_joint',         # 21
-    'left_wrist_roll_joint',     # 22
-    'right_wrist_roll_joint',    # 23
+    'left_wrist_joint',          # 22
+    'right_wrist_joint',         # 23
 ]
 """
 

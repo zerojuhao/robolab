@@ -6,10 +6,8 @@ from isaaclab.utils import configclass
 
 from robolab import ROBOLAB_ROOT_DIR
 from robolab.assets.robots.roboparty import PR1_LINKS, RP1_24DOF_CFG
-from robolab.sensors import get_link_prim_targets
+from robolab.sensors import Grid3dPointsGeneratorCfg, get_link_prim_targets
 from robolab.tasks.manager_based.parkour.parkour_env_cfg import ROUGH_TERRAINS_CFG, ParkourEnvCfg
-from robolab.sensors import Grid3dPointsGeneratorCfg, NoisyGroupedRayCasterCameraCfg, VolumePointsCfg
-from isaaclab.sensors import patterns
 
 # Must match lab_key_body_names in robolab/scripts/tools/retarget/config/rp1.yaml
 KEY_BODY_NAMES = [
@@ -17,12 +15,13 @@ KEY_BODY_NAMES = [
     "right_ankle_roll_link",
     "left_knee_link",
     "right_knee_link",
-    "left_wrist_roll_link",
-    "right_wrist_roll_link",
+    "left_wrist_link",
+    "right_wrist_link",
 ]
 
+RP1_NOMINAL_BASE_HEIGHT = RP1_24DOF_CFG.init_state.pos[2]
 RP1_24DOF_CFG.init_state.pos = (0.0, 0.0, 0.85)
-AMP_NUM_STEPS = 8
+AMP_NUM_STEPS = 3
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
@@ -36,6 +35,17 @@ FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     z_max=-0.02,
     z_num=4,
 )
+
+FOOT_HEIGHT_SCAN_RESOLUTION = 0.02
+FOOT_HEIGHT_SCAN_CENTER = (
+    0.5 * (FEET_VOLUME_POINTS_GRID.x_min + FEET_VOLUME_POINTS_GRID.x_max),
+    0.5 * (FEET_VOLUME_POINTS_GRID.y_min + FEET_VOLUME_POINTS_GRID.y_max),
+)
+FOOT_HEIGHT_SCAN_SIZE = (
+    FEET_VOLUME_POINTS_GRID.x_max - FEET_VOLUME_POINTS_GRID.x_min,
+    FEET_VOLUME_POINTS_GRID.y_max - FEET_VOLUME_POINTS_GRID.y_min,
+)
+
 KNEE_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     x_min=-0.02,
     x_max=0.09,
@@ -61,10 +71,16 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         # Scene
         self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG
         self.scene.robot = RP1_24DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        self.scene.left_height_scanner.pattern_cfg = patterns.GridPatternCfg(resolution=0.01, size=[0.2, 0.04])
-        self.scene.right_height_scanner.pattern_cfg = patterns.GridPatternCfg(resolution=0.01, size=[0.2, 0.04])
         self.scene.feet_volume_points.points_generator = FEET_VOLUME_POINTS_GRID
         self.scene.knee_volume_points.points_generator = KNEE_VOLUME_POINTS_GRID
+        for scanner_cfg in (
+            self.scene.left_height_scanner,
+            self.scene.right_height_scanner,
+        ):
+            ray_start_height = scanner_cfg.offset.pos[2]
+            scanner_cfg.offset.pos = (*FOOT_HEIGHT_SCAN_CENTER, ray_start_height)
+            scanner_cfg.pattern_cfg.size = FOOT_HEIGHT_SCAN_SIZE
+            scanner_cfg.pattern_cfg.resolution = FOOT_HEIGHT_SCAN_RESOLUTION
         self.scene.camera.prim_path = "{ENV_REGEX_NS}/Robot/waist_yaw_link"
         self.scene.camera.offset.pos = (0.09175, 0.011, 0.3982)
         self.scene.camera.offset.rot = (0.866, 0.0, 0.5, 0.0)
@@ -92,13 +108,13 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             "turn_l": 1,
             "turn_r": 1,
             # SEED
-            "idle_loop_001__A046": 1,
+            # "idle_loop_001__A046": 1,
             "stairs_climbing_down_loop_R_102__A301_M": 1,
             "stairs_climbing_down_stop_R_103__A301": 1,
             "stairs_climbing_up_start_R_001__A300": 1,
-            "walk_arc_cw_loop_001__A048_M": 1,
-            "walk_arc_cw_loop_001__A048": 1,
-            "walk_ff_loop_180_R_001__A048": 1,
+            # "walk_arc_cw_loop_001__A048_M": 1,
+            # "walk_arc_cw_loop_001__A048": 1,
+            # "walk_ff_loop_180_R_001__A048": 1,
         }
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
         self.observations.disc.history_length = AMP_NUM_STEPS
@@ -111,10 +127,29 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         }
 
         self.rewards.rewards.rpo_thigh_yaw_inward_sym_penalty = None
+        self.observations.foothold_predictor.base_height_map.params[
+            "offset"
+        ] = RP1_NOMINAL_BASE_HEIGHT
+        self.observations.foothold_predictor.hand_pos_b.params["asset_cfg"] = SceneEntityCfg(
+            "robot",
+            body_names=["left_wrist_link", "right_wrist_link"],
+            preserve_order=True,
+        )
+
         self.rewards.rewards.feet_close_xy_gauss.params["threshold"] = 0.20
-        self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint", "waist_.*_joint"])
+        self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_joint", "waist_.*_joint"])
         self.rewards.rewards.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="waist_yaw_link")
         self.rewards.rewards.pelvis_ang_vel_xy_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="waist_yaw_link")
+
+        # # Disable stair-edge virtual obstacles and all related penalties / curricula.
+        # self.scene.terrain.virtual_obstacles = {}
+        # self.events.register_virtual_obstacles = None
+        # self.events.register_virtual_obstacles_knee = None
+        # self.rewards.rewards.volume_points_penetration_feet = None
+        # self.rewards.rewards.volume_points_penetration_knee = None
+        # self.rewards.rewards.imagined_foothold_edge_penetration = None
+        # self.curriculum.volume_points_penetration_weight_feet = None
+        # self.curriculum.volume_points_penetration_weight_knee = None
 
         self.terminations.base_contact.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_names=["waist_yaw_link"])
 

@@ -35,6 +35,7 @@ from isaaclab.actuators import DelayedPDActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 from robolab.assets import ISAAC_DATA_DIR
+from robolab.assets.robots.roboparty_actuators import RoboPartyActuatorCfg
 
 RPO_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
@@ -182,14 +183,14 @@ RP1_24DOF_CFG = ArticulationCfg(
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.78),
         joint_pos={
-            "left_hip_pitch_joint": -0.2,
-            "left_knee_joint": -0.4,
+            "left_hip_pitch_joint": -0.1,
+            "left_knee_joint": -0.3,
             "left_ankle_pitch_joint": -0.2,
             "left_shoulder_pitch_joint": 0.2,
             "left_shoulder_roll_joint": 0.2,
             "left_elbow_joint": -1.2,
-            "right_hip_pitch_joint": 0.2,
-            "right_knee_joint": 0.4,
+            "right_hip_pitch_joint": 0.1,
+            "right_knee_joint": 0.3,
             "right_ankle_pitch_joint": -0.2,
             "right_shoulder_pitch_joint": -0.2,
             "right_shoulder_roll_joint": -0.2,
@@ -199,94 +200,70 @@ RP1_24DOF_CFG = ArticulationCfg(
     ),
     soft_joint_pos_limit_factor=0.90,
     actuators={
-        "waist": DelayedPDActuatorCfg(
-            joint_names_expr=[
-                ".*waist_roll.*",
-                ".*waist_yaw.*"
-            ],
-            effort_limit_sim=141.7,
-            velocity_limit_sim=14.24192,
+        "all_joints": RoboPartyActuatorCfg(
+            joint_names_expr=[".*"],
+            effort_limit_sim={
+                ".*(waist|hip|knee).*": 145.53,
+                ".*ankle.*": 56.0,
+                ".*(shoulder|elbow|wrist).*": 28.0,
+            },
+            velocity_limit_sim={
+                ".*(waist|hip|knee).*": 13.61357,
+                ".*(ankle|shoulder|elbow|wrist).*": 20.94395,
+            },
+            keep_velocity={
+                ".*(waist|hip|knee).*": 8.37758,
+                ".*(ankle|shoulder|elbow|wrist).*": 15.70796,
+            },
+            rated_effort={
+                ".*(waist|hip|knee).*": 44.0,
+                ".*ankle.*": 19.0,
+                ".*(shoulder|elbow|wrist).*": 9.5,
+            },
+            rated_velocity={
+                ".*(waist|hip|knee).*": 8.37758,
+                ".*(ankle|shoulder|elbow|wrist).*": 6.28319,
+            },
             stiffness={
-                ".*waist_roll.*": 120.0,
-                ".*waist_yaw.*": 100.0,
-            },
-            damping={
-                ".*waist_roll.*": 12.0,
-                ".*waist_yaw.*": 5.0,
-            },
-            armature=0.029085325,
-            min_delay=0,
-            max_delay=2,
-        ),
-        "hip": DelayedPDActuatorCfg(
-            joint_names_expr=[
-                ".*_hip_pitch.*",
-                ".*_hip_roll.*",
-                ".*_hip_yaw.*"
-            ],
-            effort_limit_sim=141.7,
-            velocity_limit_sim=14.24192,
-            stiffness={
-                ".*_hip_pitch.*": 120.0,
-                ".*_hip_roll.*": 120.0,
-                ".*_hip_yaw.*": 100.0
-            },
-            damping={
-                ".*_hip_pitch.*": 12.0,
-                ".*_hip_roll.*": 12.0,
-                ".*_hip_yaw.*": 5.0
-            },
-            armature=0.029085325,
-            min_delay=0,
-            max_delay=2,
-        ),
-        "knee": DelayedPDActuatorCfg(
-            joint_names_expr=[".*_knee_joint"],
-            effort_limit_sim=141.7,
-            velocity_limit_sim=14.24192,
-            stiffness=100.0,
-            damping=5.0,
-            armature=0.029085325,
-            min_delay=0,
-            max_delay=2,
-        ),
-        "ankle": DelayedPDActuatorCfg(
-            joint_names_expr=[".*_ankle_pitch_joint", ".*_ankle_roll_joint"],
-            effort_limit_sim=70.6,
-            velocity_limit_sim=21.88648,
-            stiffness=40.0,
-            damping=2.0,
-            armature=0.01,
-            min_delay=0,
-            max_delay=2,
-        ),
-        "arm": DelayedPDActuatorCfg(
-            joint_names_expr=[
-                ".*_shoulder_pitch_joint",
-                ".*_shoulder_roll_joint",
-                ".*_shoulder_yaw_joint",
-                ".*elbow.*",
-                ".*_wrist_roll_joint",
-            ],
-            effort_limit_sim=35.3,
-            velocity_limit_sim=21.88648,
-            stiffness={
-                ".*_shoulder_pitch_joint": 40.0,
-                ".*_shoulder_roll_joint": 40.0,
+                ".*waist_roll.*": 300.0,
+                ".*waist_yaw.*": 250.0,
+                ".*_hip_pitch.*": 150.0,
+                ".*_hip_roll.*": 150.0,
+                ".*_hip_yaw.*": 100.0,
+                ".*_knee_.*": 150.0,
+                ".*_ankle_(pitch|roll).*": 60.0,
+                ".*_shoulder_pitch_joint": 30.0,
+                ".*_shoulder_roll_joint": 30.0,
                 ".*_shoulder_yaw_joint": 20.0,
                 ".*elbow.*": 30.0,
-                ".*_wrist_roll_joint": 20.0,
+                ".*_wrist_joint": 20.0,
             },
             damping={
-                ".*_shoulder_pitch_joint": 4.0,
-                ".*_shoulder_roll_joint": 4.0,
+                ".*waist_roll.*": 15.0,
+                ".*waist_yaw.*": 12.5,
+                ".*_hip_pitch.*": 6.0,
+                ".*_hip_roll.*": 6.0,
+                ".*_hip_yaw.*": 4.0,
+                ".*_knee_.*": 6.0,
+                ".*_ankle_(pitch|roll).*": 3.0,
+                ".*_shoulder_pitch_joint": 1.5,
+                ".*_shoulder_roll_joint": 1.5,
                 ".*_shoulder_yaw_joint": 1.0,
-                ".*elbow.*": 3.0,
-                ".*_wrist_roll_joint": 1.0,
+                ".*elbow.*": 1.5,
+                ".*_wrist_joint": 1.0,
             },
-            armature=0.01,
+            armature={
+                ".*(waist|hip|knee).*": 0.02,
+                ".*(ankle|shoulder|elbow|wrist).*": 0.01,
+            },
             min_delay=0,
             max_delay=2,
+            friction=0.1,
+            dynamic_friction=0.1,
+            viscous_friction={
+                ".*(waist|hip|knee).*": 0.02,
+                ".*(ankle|shoulder|elbow|wrist).*": 0.01,
+            },
         ),
     },
 )
@@ -343,6 +320,6 @@ PR1_LINKS = [
     'right_ankle_roll_link',
     'left_elbow_link',
     'right_elbow_link',
-    'left_wrist_roll_link',
-    'right_wrist_roll_link'
+    'left_wrist_link',
+    'right_wrist_link',
 ]

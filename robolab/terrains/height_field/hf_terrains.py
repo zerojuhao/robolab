@@ -209,6 +209,83 @@ def perlin_pyramid_stairs_terrain(difficulty: float, cfg: hf_terrains_cfg.Perlin
 
 
 @generate_wall
+@height_field_to_mesh
+def perlin_concentric_square_platforms_terrain(
+    difficulty: float,
+    cfg: hf_terrains_cfg.PerlinConcentricSquarePlatformsTerrainCfg,
+) -> np.ndarray:
+    """Generate alternating raised and flat concentric square rings.
+
+    The terrain center and border remain at zero height. Starting immediately
+    outside the center, square rings of ``band_width`` alternate between a
+    raised platform and flat ground. All raised rings in one sub-terrain share
+    the height interpolated from ``platform_height_range`` by ``difficulty``.
+    """
+    min_height, max_height = cfg.platform_height_range
+    if min_height < 0.0 or max_height < min_height:
+        raise ValueError(
+            "platform_height_range must be non-negative and increasing, "
+            f"got {cfg.platform_height_range}."
+        )
+
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    band_pixels = round(cfg.band_width / cfg.horizontal_scale)
+    center_pixels = round(cfg.center_width / cfg.horizontal_scale)
+    border_pixels = round(cfg.border_width / cfg.horizontal_scale)
+    if band_pixels < 1:
+        raise ValueError("band_width must be at least one horizontal grid cell.")
+    if center_pixels < 1:
+        raise ValueError("center_width must be at least one horizontal grid cell.")
+    if border_pixels < 0:
+        raise ValueError("border_width must be non-negative.")
+    if center_pixels + 2 * border_pixels >= min(width_pixels, length_pixels):
+        raise ValueError(
+            "center_width and border_width leave no room for concentric rings."
+        )
+
+    height = min_height + difficulty * (max_height - min_height)
+    height_pixels = round(height / cfg.vertical_scale)
+
+    center_x = 0.5 * (width_pixels - 1)
+    center_y = 0.5 * (length_pixels - 1)
+    distance_x = np.maximum(
+        np.abs(np.arange(width_pixels, dtype=np.float64) - center_x)
+        - 0.5 * center_pixels,
+        0.0,
+    )
+    distance_y = np.maximum(
+        np.abs(np.arange(length_pixels, dtype=np.float64) - center_y)
+        - 0.5 * center_pixels,
+        0.0,
+    )
+    square_distance = np.maximum(distance_x[:, None], distance_y[None, :])
+    outside_center = square_distance > 0.0
+    band_index = np.floor(square_distance / band_pixels).astype(np.int32)
+    raised_ring = outside_center & ((band_index % 2) == 0)
+
+    interior = np.ones((width_pixels, length_pixels), dtype=bool)
+    if border_pixels > 0:
+        interior[:border_pixels, :] = False
+        interior[-border_pixels:, :] = False
+        interior[:, :border_pixels] = False
+        interior[:, -border_pixels:] = False
+
+    hf_raw = np.zeros((width_pixels, length_pixels), dtype=np.float64)
+    hf_raw[raised_ring & interior] = height_pixels
+
+    if cfg.perlin_cfg is not None:
+        perlin_cfg = cfg.perlin_cfg
+        perlin_cfg.size = cfg.size
+        perlin_cfg.horizontal_scale = cfg.horizontal_scale
+        perlin_cfg.vertical_scale = cfg.vertical_scale
+        perlin_cfg.slope_threshold = cfg.slope_threshold
+        hf_raw += generate_perlin_noise(difficulty, perlin_cfg)
+
+    return np.rint(hf_raw).astype(np.int16)
+
+
+@generate_wall
 def perlin_trapezoid_stairs_terrain(
     difficulty: float, cfg: hf_terrains_cfg.PerlinTrapezoidStairsTerrainCfg
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:

@@ -50,9 +50,11 @@ _FOV_Y_DEG = 58.29  # vertical FOV (MuJoCo free camera + frustum)
 _ENCODER_H, _ENCODER_W = 18, 32
 _CROP_REGION = (18, 0, 16, 16)  # on 64×36 grid; Isaac CropAndResizeCfg.crop_region
 _DEPTH_CLIP = (0.0, 2.5)
-# Must match delayed_visualizable_image: sensor_history_length=37, history_skip=5, num_output=8, delay=0.
+# Must match delayed_visualizable_image: sensor_history_length=37, history_skip=5, delay=0.
+# Encoder frame count is cfg.robot_config.depth_encoder_frames (indices still subsampled from this ring).
 _DEPTH_HISTORY_LEN = 37
-_DEPTH_FRAME_INDICES = np.array([1, 6, 11, 16, 21, 26, 31, 36], dtype=np.int64)
+_DEPTH_HISTORY_SKIP = 5
+_DEPTH_DELAY = 0
 _OBS_HISTORY_KEYS: tuple[str, ...] = (
     "base_ang_vel",
     "projected_gravity",
@@ -92,7 +94,7 @@ _CHASE_UP_M = 0.6
 _CHASE_LOOK_AHEAD_M = 0.8
 _CHASE_BODY_NAME = "base_link"
 # Deployment velocity limits (min, max) per axis: vx, vy, dyaw.
-_CLIP_CMD_X = (-0.6, 0.6)
+_CLIP_CMD_X = (-0.6, 0.8)
 _CLIP_CMD_Y = (-0.6, 0.6)
 _CLIP_CMD_Z = (-1.0, 1.0)
 
@@ -781,15 +783,30 @@ def preprocess_depth_frame(depth_hw: np.ndarray, model: mujoco.MjModel) -> np.nd
     return preprocess_depth_frame_from_lowres(z_low)
 
 
-def sample_depth_history(depth_buf37: list[np.ndarray]) -> np.ndarray:
-    """Stack 8 sampled frames (oldest -> newest) for shape (8, H, W)."""
+def depth_frame_indices(num_output_frames: int) -> np.ndarray:
+    """Subsample indices into the 37-frame ring (oldest → newest), same as delayed_visualizable_image."""
+    n = max(1, int(num_output_frames))
+    frames_needed = (n - 1) * _DEPTH_HISTORY_SKIP + 1 + _DEPTH_DELAY
+    if frames_needed > _DEPTH_HISTORY_LEN:
+        raise ValueError(
+            f"depth_encoder_frames={n} needs {frames_needed} slots, but buffer is {_DEPTH_HISTORY_LEN}"
+        )
+    # frame_offset largest→smallest (oldest first); index = history_len - offset - delay - 1
+    offsets = np.arange(0, n * _DEPTH_HISTORY_SKIP, _DEPTH_HISTORY_SKIP)[::-1]
+    return (_DEPTH_HISTORY_LEN - offsets - _DEPTH_DELAY - 1).astype(np.int64)
+
+
+def sample_depth_history(depth_buf37: list[np.ndarray], num_frames: int) -> np.ndarray:
+    """Stack ``num_frames`` subsampled from the 37-frame buffer (oldest → newest), shape (N, H, W)."""
+    indices = depth_frame_indices(num_frames)
+    n = len(indices)
     if not depth_buf37:
-        return np.zeros((8, _ENCODER_H, _ENCODER_W), dtype=np.float32)
+        return np.zeros((n, _ENCODER_H, _ENCODER_W), dtype=np.float32)
     buf = list(depth_buf37)
     if len(buf) < _DEPTH_HISTORY_LEN:
         buf = [buf[0]] * (_DEPTH_HISTORY_LEN - len(buf)) + buf
     stacked = np.stack(buf[-_DEPTH_HISTORY_LEN:], axis=0)
-    return stacked[_DEPTH_FRAME_INDICES].astype(np.float32)
+    return stacked[indices].astype(np.float32)
 
 
 class TermHistory:
@@ -1043,8 +1060,10 @@ def run_mujoco_onnx(
                 else:
                     depth_vis_pending = None
             depth_ring.append(dproc)
-            depth8 = sample_depth_history(list(depth_ring))
-            depth_bchw = depth8[None, ...]
+            depth_n = sample_depth_history(
+                list(depth_ring), int(cfg.robot_config.depth_encoder_frames)
+            )
+            depth_bchw = depth_n[None, ...]
 
             flat_proprio = np.concatenate([hist[k].flat() for k in _OBS_HISTORY_KEYS], axis=0)
 
@@ -1260,42 +1279,49 @@ if __name__ == "__main__":
             depth_camera_body = "waist_yaw_link"
 
         class robot_config:
-            # PD gains in URDF order (gmr_dof_names); matches rp1_deploy robot.yaml via urdf2motor.
+            # PD gains / default pos in URDF order (gmr_dof_names).
             kps = np.array(
                 [
-                    120.0, 120.0, 100.0, 100.0, 40.0, 40.0,
-                    120.0, 120.0, 100.0, 100.0, 40.0, 40.0,
-                    120.0, 100.0,
-                    40.0, 40.0, 20.0, 30.0, 20.0,
-                    40.0, 40.0, 20.0, 30.0, 20.0,
+                    150.0, 150.0, 100.0, 150.0, 60.0, 60.0,
+                    150.0, 150.0, 100.0, 150.0, 60.0, 60.0,
+                    300.0, 250.0,
+                    30.0, 30.0, 20.0, 30.0, 20.0,
+                    30.0, 30.0, 20.0, 30.0, 20.0,
                 ],
                 dtype=np.double,
             )
             kds = np.array(
                 [
-                    12.0, 12.0, 5.0, 5.0, 2.0, 2.0,
-                    12.0, 12.0, 5.0, 5.0, 2.0, 2.0,
-                    12.0, 5.0,
-                    4.0, 4.0, 1.0, 3.0, 1.0,
-                    4.0, 4.0, 1.0, 3.0, 1.0,
+                    6.0, 6.0, 4.0, 6.0, 3.0, 3.0,
+                    6.0, 6.0, 4.0, 6.0, 3.0, 3.0,
+                    15.0, 12.5,
+                    1.5, 1.5, 1.0, 1.5, 1.0,
+                    1.5, 1.5, 1.0, 1.5, 1.0,
                 ],
                 dtype=np.double,
             )
             default_pos = np.array(
                 [
-                    -0.2, 0.0, 0.0, -0.4, -0.2, 0.0,
-                    0.2, 0.0, 0.0, 0.4, -0.2, 0.0,
+                    -0.1, 0.0, 0.0, -0.3, -0.2, 0.0,
+                    0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
                     0.0, 0.0,
                     0.2, 0.2, 0.0, -1.2, 0.0,
                     -0.2, -0.2, 0.0, 1.2, 0.0,
                 ],
                 dtype=np.double,
             )
+            # effort_limit_sim (hip/knee/waist 145.53, ankle 56, arm 28).
             tau_limit = np.array(
-                [141.7] * 6 + [141.7] * 6 + [141.7] * 2 + [35.3] * 5 + [35.3] * 5,
+                [145.53, 145.53, 145.53, 145.53, 56.0, 56.0]
+                + [145.53, 145.53, 145.53, 145.53, 56.0, 56.0]
+                + [145.53, 145.53]
+                + [28.0] * 5
+                + [28.0] * 5,
                 dtype=np.double,
             )
             frame_stack = 8  # obs history length
+            depth_encoder_frames = 8  # encoder depth frames (subsampled from 37-frame buffer)
+
             num_actions = 24
             action_scale = 0.25
             # lab_dof_names[i] -> gmr/URDF index (deployment usd2urdf).

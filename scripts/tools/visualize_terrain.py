@@ -6,6 +6,9 @@
 
 """Visualize parkour terrains defined in terrain_generator_cfg.py.
 
+Spawns one RP1 at each sub-terrain tile origin (terrain_origins[row, col]) in its
+default standing pose and holds them static (no physics) as size/pose references.
+
 Example usage:
 
 .. code-block:: bash
@@ -15,6 +18,7 @@ Example usage:
     python scripts/tools/visualize_terrain.py --color_scheme height --use_curriculum
     python scripts/tools/visualize_terrain.py --tick_spacing 0.5
     python scripts/tools/visualize_terrain.py --no_debug_overlay
+    python scripts/tools/visualize_terrain.py --virtual_edges
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -31,21 +35,27 @@ parser.add_argument(
     choices=["height", "random", "none"],
     help="Color scheme for terrain meshes.",
 )
-parser.add_argument("--use_curriculum", action="store_true", default=False, help="Enable terrain curriculum.")
+parser.add_argument("--use_curriculum", action="store_true", default=True, help="Enable terrain curriculum.")
 parser.add_argument(
     "--sub_terrain",
     type=str,
     default=None,
     help="Visualize only this sub-terrain name (e.g. trapezoid_stairs).",
 )
-parser.add_argument("--num_rows", type=int, default=2, help="Number of terrain rows.")
-parser.add_argument("--num_cols", type=int, default=2, help="Number of terrain columns.")
+parser.add_argument("--num_rows", type=int, default=5, help="Number of terrain rows.")
+parser.add_argument("--num_cols", type=int, default=10, help="Number of terrain columns.")
 parser.add_argument("--tick_spacing", type=float, default=1.0, help="Grid tick spacing in meters (local frame).")
 parser.add_argument(
     "--no_debug_overlay",
     action="store_true",
-    default=False,
+    default=True,
     help="Disable XY grid ticks and terrain-name overlay.",
+)
+parser.add_argument(
+    "--virtual_edges",
+    action="store_true",
+    default=True,
+    help="Enable virtual edge obstacles (GreedyconcatEdgeCylinder) for visualization.",
 )
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -54,14 +64,22 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import numpy as np
+import torch
 from pxr import Gf, UsdGeom, Vt
 
 import isaaclab.sim as sim_utils
+from isaaclab.assets import Articulation, ArticulationCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
-from robolab.terrains import TerrainImporter, TerrainImporterCfg
+from robolab.assets.robots.roboparty import RP1_24DOF_CFG,RPO_CFG
+from robolab.terrains import GreedyconcatEdgeCylinderCfg, TerrainImporter, TerrainImporterCfg
 from robolab.terrains.terrain_generator import FiledTerrainGenerator
 
 from robolab.tasks.manager_based.parkour.terrain_generator_cfg import ROUGH_TERRAINS_CFG
+
+# Match rp1_parkour_env_cfg standing height above each terrain origin.
+ROBOT_SPAWN_HEIGHT = 0.85
 
 # Grid overlay colors: border, minor lines, +X axis, +Y axis.
 _COLOR_BORDER = (0.85, 0.85, 0.85)
@@ -219,6 +237,10 @@ def design_scene():
             raise ValueError(f"Unknown sub-terrain '{args_cli.sub_terrain}'. Available: {available}")
         sub_cfg = terrain_gen_cfg.sub_terrains[args_cli.sub_terrain]
         terrain_gen_cfg.sub_terrains = {args_cli.sub_terrain: sub_cfg.replace(proportion=1.0)}
+    # Disable border walls for clearer visualization (match play cfg).
+    for sub_cfg in terrain_gen_cfg.sub_terrains.values():
+        if hasattr(sub_cfg, "wall_prob"):
+            sub_cfg.wall_prob = [0.0, 0.0, 0.0, 0.0]
 
     terrain_importer_cfg = TerrainImporterCfg(
         num_envs=args_cli.num_rows * args_cli.num_cols,
@@ -228,6 +250,16 @@ def design_scene():
         terrain_type="generator",
         terrain_generator=terrain_gen_cfg,
         debug_vis=True,
+        virtual_obstacles=(
+            {
+                "edges": GreedyconcatEdgeCylinderCfg(
+                    cylinder_radius=0.03,
+                    min_points=2,
+                ),
+            }
+            if args_cli.virtual_edges
+            else {}
+        ),
     )
     if args_cli.color_scheme in ["height", "random"]:
         terrain_importer_cfg.visual_material = None
@@ -241,6 +273,48 @@ def design_scene():
     return TerrainImporter(terrain_importer_cfg)
 
 
+def _terrain_origins_flat(terrain_importer, device: str) -> torch.Tensor:
+    """Return (num_rows * num_cols, 3) world origins, row-major over the tile grid."""
+    origins = terrain_importer.terrain_origins
+    if origins is None:
+        origins = terrain_importer.terrain_generator.terrain_origins
+    if origins is None:
+        raise RuntimeError("terrain_origins is not available.")
+    if hasattr(origins, "detach"):
+        origins = origins.to(device=device)
+    else:
+        origins = torch.as_tensor(origins, device=device, dtype=torch.float32)
+    return origins.reshape(-1, 3)
+
+
+@configclass
+class Rp1VisSceneCfg(InteractiveSceneCfg):
+    """One RP1 per env; env origins are overridden with terrain tile origins."""
+
+    robot: ArticulationCfg = RPO_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        init_state=RPO_CFG.init_state.replace(pos=(0.0, 0.0, ROBOT_SPAWN_HEIGHT)),
+    )
+
+
+def hold_robots_static(sim: sim_utils.SimulationContext, scene: InteractiveScene) -> None:
+    """Render loop: keep each RP1 at its terrain origin in default pose without physics."""
+    robot: Articulation = scene["robot"]
+    sim_dt = sim.get_physics_dt()
+    root_states = robot.data.default_root_state.clone()
+    root_states[:, :3] += scene.env_origins
+    default_joint_pos = robot.data.default_joint_pos
+    default_joint_vel = robot.data.default_joint_vel
+
+    while simulation_app.is_running():
+        robot.write_root_state_to_sim(root_states)
+        robot.write_joint_state_to_sim(default_joint_pos, default_joint_vel)
+        scene.write_data_to_sim()
+        sim.forward()
+        sim.render()
+        scene.update(sim_dt)
+
+
 def main():
     """Main function."""
     sim_cfg = sim_utils.SimulationCfg(dt=0.01, device=args_cli.device)
@@ -248,14 +322,33 @@ def main():
     sim.set_camera_view(eye=[12.0, 12.0, 8.0], target=[0.0, 0.0, 0.0])
 
     terrain_importer = design_scene()
+    num_envs = args_cli.num_rows * args_cli.num_cols
+    scene = InteractiveScene(Rp1VisSceneCfg(num_envs=num_envs, env_spacing=2.0))
     sim.reset()
+
+    tile_origins = _terrain_origins_flat(terrain_importer, sim.device)
+    scene.env_origins[:] = tile_origins
+
+    robot: Articulation = scene["robot"]
+    root_states = robot.data.default_root_state.clone()
+    root_states[:, :3] += scene.env_origins
+    robot.write_root_state_to_sim(root_states)
+    robot.write_joint_state_to_sim(robot.data.default_joint_pos, robot.data.default_joint_vel)
+    scene.write_data_to_sim()
+    sim.forward()
+    scene.update(sim.get_physics_dt())
+
     if not args_cli.no_debug_overlay:
         spawn_debug_overlay(terrain_importer, tick_spacing=args_cli.tick_spacing)
     print("[INFO]: Parkour terrain visualization ready.")
     print(f"[INFO]: Sub-terrains: {list(terrain_importer.terrain_generator.cfg.sub_terrains.keys())}")
+    print(f"[INFO]: Virtual edge obstacles: {'enabled' if args_cli.virtual_edges else 'disabled'}")
+    print(
+        f"[INFO]: Spawned {num_envs} RP1 robots at each terrain origin "
+        f"(standing height +{ROBOT_SPAWN_HEIGHT} m)."
+    )
 
-    while simulation_app.is_running():
-        sim.step()
+    hold_robots_static(sim, scene)
 
 
 if __name__ == "__main__":
