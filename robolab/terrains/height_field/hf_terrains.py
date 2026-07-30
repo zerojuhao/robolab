@@ -210,9 +210,9 @@ def perlin_pyramid_stairs_terrain(difficulty: float, cfg: hf_terrains_cfg.Perlin
 
 @generate_wall
 @height_field_to_mesh
-def perlin_concentric_square_platforms_terrain(
+def perlin_platforms_terrain(
     difficulty: float,
-    cfg: hf_terrains_cfg.PerlinConcentricSquarePlatformsTerrainCfg,
+    cfg: hf_terrains_cfg.PerlinPlatformsTerrainCfg,
 ) -> np.ndarray:
     """Generate alternating raised and flat concentric square rings.
 

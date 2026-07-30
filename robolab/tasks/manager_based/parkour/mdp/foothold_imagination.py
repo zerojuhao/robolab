@@ -27,7 +27,7 @@ from .foothold_prediction import (
     normalize_foothold_predictor_cfg,
     normalize_foothold_support_cfg,
 )
-from .terrain_family import GAP_FAMILY_ID, STAIRS_FAMILY_IDS, get_terrain_family_ids
+from .terrain_family import DISCRETE_FAMILY_ID, STAIRS_FAMILY_IDS, get_terrain_family_ids
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -41,10 +41,10 @@ __all__ = [
 ]
 
 
-def _gap_or_stairs_mask(family_ids: torch.Tensor) -> torch.Tensor:
+def _discrete_or_stairs_mask(family_ids: torch.Tensor) -> torch.Tensor:
     """Return the terrain mask where foothold training and rewards are enabled."""
     return (
-        (family_ids == GAP_FAMILY_ID)
+        (family_ids == DISCRETE_FAMILY_ID)
         | (family_ids == STAIRS_FAMILY_IDS[0])
         | (family_ids == STAIRS_FAMILY_IDS[1])
     )
@@ -216,7 +216,7 @@ class FootholdImaginationManager:
         )
         swing = ~contact
         terrain_ready = self._terrain_ready()
-        training_terrain = _gap_or_stairs_mask(get_terrain_family_ids(self.env))
+        training_terrain = _discrete_or_stairs_mask(get_terrain_family_ids(self.env))
         training_ready = terrain_ready & training_terrain
 
         if self._step_counter % max(self.cfg.pending_sample_stride, 1) == 0:
@@ -256,7 +256,7 @@ class FootholdImaginationManager:
         env_ids = events[:, 0]
         foot_ids = events[:, 1]
         family_ids = get_terrain_family_ids(self.env)[env_ids]
-        valid = self._terrain_ready()[env_ids] & _gap_or_stairs_mask(family_ids)
+        valid = self._terrain_ready()[env_ids] & _discrete_or_stairs_mask(family_ids)
         env_ids = env_ids[valid]
         foot_ids = foot_ids[valid]
         if env_ids.numel() == 0:
@@ -357,7 +357,7 @@ class FootholdImaginationManager:
             self._contact_sensor.data.current_contact_time[:, self._contact_body_ids]
             > 0.0
         )
-        non_slope = terrain_ready & _gap_or_stairs_mask(family_ids)
+        non_slope = terrain_ready & _discrete_or_stairs_mask(family_ids)
         if self.support_cfg.disable_slope_family:
             non_slope = non_slope & (
                 family_ids != self.support_cfg.slope_family_id
@@ -423,7 +423,7 @@ class FootholdImaginationManager:
             self._contact_sensor.data.current_contact_time[:, self._contact_body_ids]
             > 0.0
         )
-        eligible = terrain_ready & _gap_or_stairs_mask(family_ids)
+        eligible = terrain_ready & _discrete_or_stairs_mask(family_ids)
         if self.support_cfg.disable_slope_family:
             eligible = eligible & (
                 family_ids != self.support_cfg.slope_family_id

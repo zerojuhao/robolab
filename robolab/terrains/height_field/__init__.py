@@ -1,5 +1,5 @@
 from .hf_terrains_cfg import (
-    PerlinConcentricSquarePlatformsTerrainCfg,
+    PerlinPlatformsTerrainCfg,
     PerlinCrossStoneTerrainCfg,
     PerlinDiscreteObstaclesTerrainCfg,
     PerlinGutterTerrainCfg,

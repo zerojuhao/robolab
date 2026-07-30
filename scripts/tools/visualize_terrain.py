@@ -48,7 +48,7 @@ parser.add_argument("--tick_spacing", type=float, default=1.0, help="Grid tick s
 parser.add_argument(
     "--no_debug_overlay",
     action="store_true",
-    default=True,
+    default=False,
     help="Disable XY grid ticks and terrain-name overlay.",
 )
 parser.add_argument(

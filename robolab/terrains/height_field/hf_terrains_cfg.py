@@ -61,10 +61,10 @@ class PerlinInvertedPyramidStairsTerrainCfg(HfInvertedPyramidStairsTerrainCfg, W
 
 
 @configclass
-class PerlinConcentricSquarePlatformsTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
+class PerlinPlatformsTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
     """Concentric square platform rings alternating with flat ground."""
 
-    function = hf_terrains.perlin_concentric_square_platforms_terrain
+    function = hf_terrains.perlin_platforms_terrain
 
     platform_height_range: tuple[float, float] = (0.05, 0.4)
     """Raised-ring height range in meters, interpolated by terrain difficulty."""

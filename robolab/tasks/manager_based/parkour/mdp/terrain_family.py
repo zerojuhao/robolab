@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 # Keep in sync with AMPDiscriminatorCfg.num_terrain_families default.
 PERLIN_ROUGH_FAMILY_ID = 0
-GAP_FAMILY_ID = 1
+DISCRETE_FAMILY_ID = 1
 STAIRS_DOWN_FAMILY_ID = 2
 STAIRS_UP_FAMILY_ID = 3
 SLOPE_FAMILY_ID = 4
@@ -93,10 +93,10 @@ def _family_id_from_name(name: str) -> int:
     # Match inverted stairs before plain "stairs" (names like pyramid_stairs_inv).
     if "perlin_rough" in lower:
         return PERLIN_ROUGH_FAMILY_ID
-    if "concentric_square_platforms" in lower:
-        return GAP_FAMILY_ID
+    if "platforms" in lower:
+        return DISCRETE_FAMILY_ID
     if "gap" in lower:
-        return GAP_FAMILY_ID
+        return DISCRETE_FAMILY_ID
     if "stairs" in lower and "inv" in lower:
         return STAIRS_UP_FAMILY_ID
     if "stairs" in lower:
