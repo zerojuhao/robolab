@@ -16,7 +16,7 @@ from robolab.tasks.manager_based.parkour.mdp.symmetry import rp1
 class RslRlPpoEncoderMoEActorCriticCfg:
     class_name: str = "EncoderMoEActorCritic"
     init_noise_std: float = 1.0
-    num_moe_experts: int = 6
+    num_moe_experts: int = 4
     moe_gate_hidden_dims: list[int] = []
     actor_hidden_dims: list[int] = [256, 128, 64]
     critic_hidden_dims: list[int] = [256, 128, 64]
@@ -62,10 +62,10 @@ class RP1ParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         weight_decay=1.0e-5,
         ema_decay=0.99,
         grid=FootholdGridCfg(
-            # Reach extents must be integer multiples of resolution (1.2/0.03, 0.9/0.03).
+            # Bbox spans must be integer multiples of resolution (both axes 1.2 m at center_y=0.15).
             resolution=0.03,
             reach_center=(0.0, 0.15),
-            reach_radii=(0.6, 0.4),
+            reach_radii=(0.6, 0.45),
             reward_quality_top_k=64,
             reward_quality_eval_chunk_size=64,
             reward_unselected_mass_penalty=1.0,

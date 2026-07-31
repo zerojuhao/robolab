@@ -158,7 +158,11 @@ class ReachableFootholdGrid:
                 & (niy < self.num_y)
             )
             lattice_neighbor_ids = nix * self.num_y + niy
-            compact_ids = self._lattice_to_compact.gather(0, lattice_neighbor_ids)
+            # Clamp before gather: out-of-lattice neighbors are masked out below.
+            safe_lattice_ids = lattice_neighbor_ids.clamp(
+                0, self._lattice_to_compact.shape[0] - 1
+            )
+            compact_ids = self._lattice_to_compact.gather(0, safe_lattice_ids)
             valid = on_lattice & (compact_ids >= 0)
             neighbor_indices.append(torch.where(valid, compact_ids, torch.zeros_like(compact_ids)))
             neighbor_valid.append(valid)
