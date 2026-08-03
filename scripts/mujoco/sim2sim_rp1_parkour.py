@@ -1216,20 +1216,20 @@ def run_mujoco_onnx(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + actor.onnx).")
+    parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + policy_parkour.onnx).")
     default_export = (
         "rp1e0"
     )
     parser.add_argument(
         "--depth_encoder",
         type=str,
-        default=f"{default_export}/0-depth_encoder.onnx",
+        default=f"{default_export}/depth_encoder.onnx",
         help="Path to depth encoder ONNX.",
     )
     parser.add_argument(
         "--actor",
         type=str,
-        default=f"{default_export}/actor.onnx",
+        default=f"{default_export}/policy_parkour.onnx",
         help="Path to actor ONNX (includes obs normalizer if exported with normalization).",
     )
     parser.add_argument(

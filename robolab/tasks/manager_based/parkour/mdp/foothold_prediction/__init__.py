@@ -6,7 +6,7 @@ from .config import (
     normalize_foothold_grid_cfg,
     normalize_foothold_predictor_cfg,
 )
-from .grid import ReachableFootholdGrid
+from .grid import FootholdGaussianGeometry
 from .model import FootholdPredictor
 from .support import (
     FootholdSupportCfg,
@@ -20,7 +20,7 @@ __all__ = [
     "FootholdPredictor",
     "FootholdPredictorCfg",
     "FootholdPredictorTrainer",
-    "ReachableFootholdGrid",
+    "FootholdGaussianGeometry",
     "FootholdSupportCfg",
     "FootholdSupportEvaluator",
     "normalize_foothold_predictor_cfg",

@@ -83,26 +83,52 @@ def compute_symmetric_states(
     return obs_aug, actions_aug
 
 
-def _height_scan_left_right_dims(env: ManagerBasedRLEnv) -> tuple[int, int, int]:
+def _grid_scan_left_right_dims(
+    env: ManagerBasedRLEnv,
+    scanner_attr: str,
+    hist_length: int,
+) -> tuple[int, int, int]:
     cfg = getattr(env, "unwrapped", env).cfg
-    pat = cfg.scene.height_scanner.pattern_cfg
+    pat = getattr(cfg.scene, scanner_attr).pattern_cfg
     if pat.ordering != "xy":
         raise NotImplementedError(
-            "height_scan L-R symmetry only supports GridPatternCfg ordering 'xy';"
+            "height-map L-R symmetry only supports GridPatternCfg ordering 'xy';"
             f" extend layouts if pattern uses ordering {pat.ordering!r}."
         )
-    hist = cfg.observations.critic.height_scan.history_length
     res = float(pat.resolution)
     s0, s1 = float(pat.size[0]), float(pat.size[1])
     nx = int(torch.arange(-s0 / 2, s0 / 2 + 1.0e-9, res).numel())
     ny = int(torch.arange(-s1 / 2, s1 / 2 + 1.0e-9, res).numel())
-    return hist, ny, nx
+    return hist_length, ny, nx
 
 
-def _transform_height_scan_left_right(env: ManagerBasedRLEnv, hs: torch.Tensor) -> torch.Tensor:
-    hist, ny, nx = _height_scan_left_right_dims(env)
+def _transform_height_scan_left_right(
+    hs: torch.Tensor,
+    hist: int,
+    ny: int,
+    nx: int,
+) -> torch.Tensor:
     out = hs.view(hs.shape[0], hist, ny, nx).flip(dims=[2])
     return out.reshape(hs.shape)
+
+
+def _swap_pair_and_flip_y(feats: torch.Tensor, hist: int) -> torch.Tensor:
+    """Mirror flattened ``[hist, 2, 3]`` body features: swap L/R and flip base-frame Y."""
+    out = feats.view(feats.shape[0], hist, 2, 3).clone()
+    swapped = out.clone()
+    swapped[:, :, 0] = out[:, :, 1]
+    swapped[:, :, 1] = out[:, :, 0]
+    swapped[..., 1] = -swapped[..., 1]
+    return swapped.reshape(feats.shape)
+
+
+def _swap_pair_scalar(feats: torch.Tensor, hist: int) -> torch.Tensor:
+    """Mirror flattened ``[hist, 2]`` scalar features by swapping L/R."""
+    out = feats.view(feats.shape[0], hist, 2).clone()
+    swapped = out.clone()
+    swapped[:, :, 0] = out[:, :, 1]
+    swapped[:, :, 1] = out[:, :, 0]
+    return swapped.reshape(feats.shape)
 
 
 def _transform_policy_obs_left_right(obs: TensorDict) -> TensorDict:
@@ -120,6 +146,7 @@ def _transform_policy_obs_left_right(obs: TensorDict) -> TensorDict:
 
 def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) -> TensorDict:
     obs = obs.clone()
+    cfg = getattr(env, "unwrapped", env).cfg.observations.critic
     obs["base_lin_vel"] = _apply_xyz_sign(obs["base_lin_vel"], [1, -1, 1])
     obs["base_ang_vel"] = _apply_xyz_sign(obs["base_ang_vel"], [-1, 1, -1])
     obs["projected_gravity"] = _apply_xyz_sign(obs["projected_gravity"], [1, -1, 1])
@@ -129,8 +156,27 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
     obs["actions"] = _switch_joints_left_right_flat(obs["actions"])
     if "depth_image" in obs:
         obs["depth_image"] = _transform_depth_obs_left_right(obs["depth_image"])
+    if "foot_lin_vel" in obs:
+        obs["foot_lin_vel"] = _swap_pair_and_flip_y(obs["foot_lin_vel"], cfg.foot_lin_vel.history_length)
+    if "foot_contact" in obs:
+        obs["foot_contact"] = _swap_pair_scalar(obs["foot_contact"], cfg.foot_contact.history_length)
+    if "hand_pos_b" in obs:
+        obs["hand_pos_b"] = _swap_pair_and_flip_y(obs["hand_pos_b"], cfg.hand_pos_b.history_length)
+    if "foot_pos_b" in obs:
+        obs["foot_pos_b"] = _swap_pair_and_flip_y(obs["foot_pos_b"], cfg.foot_pos_b.history_length)
     if "height_scan" in obs:
-        obs["height_scan"] = _transform_height_scan_left_right(env, obs["height_scan"])
+        hist, ny, nx = _grid_scan_left_right_dims(
+            env, "height_scanner", cfg.height_scan.history_length
+        )
+        obs["height_scan"] = _transform_height_scan_left_right(obs["height_scan"], hist, ny, nx)
+    if "left_foot_height_map" in obs and "right_foot_height_map" in obs:
+        hist, ny, nx = _grid_scan_left_right_dims(
+            env, "left_height_scanner", cfg.left_foot_height_map.history_length
+        )
+        left = _transform_height_scan_left_right(obs["left_foot_height_map"], hist, ny, nx)
+        right = _transform_height_scan_left_right(obs["right_foot_height_map"], hist, ny, nx)
+        obs["left_foot_height_map"] = right
+        obs["right_foot_height_map"] = left
     return obs
 
 

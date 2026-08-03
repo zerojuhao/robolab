@@ -34,7 +34,8 @@ class RslRlPpoEncoderMoEActorCriticCfg:
         "last_activation": "ReLU",
     }
     encoder_onnx_stems: dict[str, str] = {"depth_image": "depth_encoder"}
-    encoder_onnx_sequential_idx: int = 0
+    encoder_onnx_sequential_idx: int | None = None
+    actor_onnx_filename: str = "policy_parkour.onnx"
 
 
 @configclass

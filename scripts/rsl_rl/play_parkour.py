@@ -167,6 +167,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         with torch.inference_mode():
             actions = policy(obs)
+            if isinstance(runner, AMPRunner):
+                runner.prepare_foothold_prediction_step(
+                    obs, actions, enable_inference_guidance=True
+                )
             obs, _, dones, _ = env.step(actions)
             policy_nn.reset(dones)
         if args_cli.video:

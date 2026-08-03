@@ -5,11 +5,10 @@ from __future__ import annotations
 import copy
 
 import torch
-import torch.nn.functional as F
 import torch.optim as optim
 
 from .config import FootholdPredictorCfg
-from .grid import ReachableFootholdGrid
+from .grid import FootholdGaussianGeometry
 from .model import FootholdPredictor
 from .replay_buffer import FootholdReplayBuffer
 
@@ -24,10 +23,8 @@ class FootholdPredictorTrainer:
         self.input_dim = input_dim
         self.cfg = cfg
         self.device = device
-        self.grid = ReachableFootholdGrid(cfg.grid, device)
-        self.model = FootholdPredictor(
-            input_dim, cfg.hidden_dims, self.grid.num_cells
-        ).to(device)
+        self.grid = FootholdGaussianGeometry(cfg.grid, device)
+        self.model = FootholdPredictor(input_dim, cfg.hidden_dims).to(device)
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             for parameter in self.model.parameters():
                 torch.distributed.broadcast(parameter.data, src=0)
@@ -53,107 +50,17 @@ class FootholdPredictorTrainer:
     ) -> None:
         self.train_buffer.append(inputs, targets, foot_ids)
 
+    def clear_train_buffer(self) -> None:
+        """Discard replay samples without touching model weights."""
+        self.train_buffer.clear()
+
     @torch.no_grad()
     def predict(
         self, predictor_input: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return Gaussian means ``[N,2,2]`` and sigmas ``[N,2]``."""
         self.ema_model.eval()
-        logits, raw_residuals = self.ema_model(predictor_input)
-        return (
-            self.grid.probabilities(logits),
-            self.grid.bounded_residuals(raw_residuals),
-        )
-
-    def _neighbor_support_mask(
-        self,
-        target_indices: torch.Tensor,
-        foot_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return neighbor cell ids [B, 5] and valid∩reachable mask."""
-        neighbor_ids = self.grid.neighbor_indices[target_indices]
-        neighbor_valid = self.grid.neighbor_valid[target_indices]
-        reachable = self.grid.reachable_mask[foot_ids].gather(1, neighbor_ids)
-        return neighbor_ids, neighbor_valid & reachable
-
-    def _classification_loss(
-        self,
-        logits: torch.Tensor,
-        target_indices: torch.Tensor,
-        foot_ids: torch.Tensor,
-        target_in_reach: torch.Tensor,
-    ) -> torch.Tensor:
-        """Hard CE, or soft CE over GT + reachable 4-neighbors."""
-        zero = logits.sum() * 0.0
-        neighbor_weight = float(getattr(self.cfg, "ce_neighbor_weight", 0.0))
-        in_reach_only = bool(getattr(self.cfg, "classify_in_reach_only", True))
-
-        if neighbor_weight <= 0.0:
-            per_sample = F.cross_entropy(logits, target_indices, reduction="none")
-        else:
-            neighbor_ids, support = self._neighbor_support_mask(
-                target_indices, foot_ids
-            )
-            is_gt = neighbor_ids == target_indices.unsqueeze(1)
-            soft = torch.where(
-                is_gt,
-                torch.ones_like(neighbor_ids, dtype=logits.dtype),
-                logits.new_full(neighbor_ids.shape, neighbor_weight),
-            )
-            soft = soft * support.to(logits.dtype)
-            soft_sum = soft.sum(dim=-1, keepdim=True).clamp_min(
-                torch.finfo(logits.dtype).eps
-            )
-            soft = soft / soft_sum
-            log_probs = F.log_softmax(logits, dim=-1).gather(1, neighbor_ids)
-            per_sample = -(soft * log_probs).sum(dim=-1)
-
-        if in_reach_only:
-            if not target_in_reach.any():
-                return zero
-            return per_sample[target_in_reach].mean()
-        return per_sample.mean()
-
-    def _neighbor_residual_loss(
-        self,
-        residuals: torch.Tensor,
-        target: torch.Tensor,
-        target_indices: torch.Tensor,
-        foot_ids: torch.Tensor,
-        target_in_reach: torch.Tensor,
-    ) -> torch.Tensor:
-        """Supervise residual on the GT cell and its reachable 4-neighbors."""
-        delta = self.grid.max_residual
-        zero = residuals.sum() * 0.0
-        if not target_in_reach.any() or delta <= 0.0:
-            return zero
-
-        neighbor_ids, support = self._neighbor_support_mask(target_indices, foot_ids)
-        is_gt = neighbor_ids == target_indices.unsqueeze(1)
-        neighbor_weight = float(getattr(self.cfg, "residual_neighbor_weight", 0.0))
-        weights = torch.where(
-            is_gt,
-            torch.ones_like(neighbor_ids, dtype=residuals.dtype),
-            residuals.new_full(neighbor_ids.shape, neighbor_weight),
-        )
-        weights = weights * support.to(residuals.dtype)
-        weights = weights * target_in_reach.to(residuals.dtype).unsqueeze(1)
-        weight_sum = weights.sum()
-        if weight_sum <= 0.0:
-            return zero
-
-        centers = self.grid.points[neighbor_ids]
-        gathered = torch.gather(
-            residuals,
-            1,
-            neighbor_ids.unsqueeze(-1).expand(-1, -1, 2),
-        )
-        target_residuals = (target.unsqueeze(1) - centers).clamp(-delta, delta)
-        per_cell = F.smooth_l1_loss(
-            gathered / delta,
-            target_residuals / delta,
-            reduction="none",
-        ).mean(dim=-1)
-        return (weights * per_cell).sum() / weight_sum
+        return self.grid.decode_distribution(self.ema_model(predictor_input))
 
     def _losses(
         self,
@@ -162,35 +69,32 @@ class FootholdPredictorTrainer:
         target: torch.Tensor,
         foot_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        logits_all, raw_residuals_all = model(predictor_input)
-        logits_all = self.grid.masked_logits(logits_all)
-        residuals_all = self.grid.bounded_residuals(raw_residuals_all)
-
+        raw_distribution = model(predictor_input)
+        pred_xy, pred_sigma = self.grid.decode_distribution(raw_distribution)
         batch_ids = torch.arange(predictor_input.shape[0], device=self.device)
-        logits = logits_all[batch_ids, foot_ids]
-        residuals = residuals_all[batch_ids, foot_ids]
-        target_indices, target_in_reach = self.grid.target_indices(target, foot_ids)
+        pred_foot = pred_xy[batch_ids, foot_ids]
+        sigma_foot = pred_sigma[batch_ids, foot_ids]
 
-        classification_loss = self._classification_loss(
-            logits, target_indices, foot_ids, target_in_reach
+        squared_error = (pred_foot - target).square().sum(dim=-1)
+        per_sample = (
+            squared_error / (2.0 * sigma_foot.square())
+            + 2.0 * torch.log(sigma_foot)
         )
-        residual_loss = self._neighbor_residual_loss(
-            residuals, target, target_indices, foot_ids, target_in_reach
-        )
-        ce_coef = float(getattr(self.cfg, "classification_loss_coef", 1.0))
-        prediction_loss = (
-            ce_coef * classification_loss + self.cfg.residual_loss_coef * residual_loss
-        )
+        finite = torch.isfinite(target).all(dim=-1)
+        nll = per_sample[finite].mean() if finite.any() else pred_foot.sum() * 0.0
 
-        probabilities = torch.softmax(logits, dim=-1)
-        mode_indices = probabilities.argmax(dim=-1)
-        mode_xy = self.grid.points[mode_indices] + residuals[batch_ids, mode_indices]
-        xy_rmse = (mode_xy - target).square().sum(dim=-1).mean().sqrt()
-
+        prediction_loss = float(self.cfg.nll_loss_coef) * nll
+        valid_squared_error = squared_error[finite]
+        valid_sigma = sigma_foot[finite]
+        xy_rmse = valid_squared_error.mean().sqrt()
+        normalized_squared_error = valid_squared_error / valid_sigma.square()
         metrics = {
+            "nll": nll.detach(),
             "xy_rmse": xy_rmse.detach(),
-            "top1_acc": (mode_indices == target_indices).float().mean().detach(),
-            "out_of_reach_ratio": (~target_in_reach).float().mean().detach(),
+            "sigma_mean": valid_sigma.mean().detach(),
+            "calibration_error": (
+                normalized_squared_error.mean() - 2.0
+            ).abs().detach(),
         }
         return prediction_loss, metrics
 
@@ -243,18 +147,13 @@ class FootholdPredictorTrainer:
             }
 
         if torch.distributed.is_available() and torch.distributed.is_initialized():
-            keys = (
-                "prediction_loss",
-                "xy_rmse",
-                "top1_acc",
-                "out_of_reach_ratio",
-            )
             packed = torch.tensor(
                 (
                     prediction_loss,
+                    metric_values["nll"],
                     metric_values["xy_rmse"],
-                    metric_values["top1_acc"],
-                    metric_values["out_of_reach_ratio"],
+                    metric_values["sigma_mean"],
+                    metric_values["calibration_error"],
                 ),
                 dtype=torch.float64,
                 device=self.device,
@@ -263,17 +162,29 @@ class FootholdPredictorTrainer:
             packed /= torch.distributed.get_world_size()
             values = packed.tolist()
             prediction_loss = values[0]
-            metric_values = dict(zip(keys[1:], values[1:]))
+            metric_values = {
+                "nll": values[1],
+                "xy_rmse": values[2],
+                "sigma_mean": values[3],
+                "calibration_error": values[4],
+            }
 
         xy_rmse = metric_values["xy_rmse"]
-        if not self.reward_enabled and xy_rmse < self.cfg.enable_xy_rmse_threshold:
+        if (
+            not self.reward_enabled
+            and xy_rmse < self.cfg.enable_xy_rmse_threshold
+        ):
             self.reward_enabled = True
 
         return {
             "Foothold/Loss/prediction_loss": prediction_loss,
-            "Foothold/Accuracy/xy_rmse_m": xy_rmse,
-            "Foothold/Accuracy/top1_acc": metric_values["top1_acc"],
-            "Foothold/Data/out_of_reach_ratio": metric_values["out_of_reach_ratio"],
+            "Foothold/Loss/nll": metric_values["nll"],
+            "Foothold/Accuracy/xy_rmse_m": metric_values["xy_rmse"],
+            "Foothold/Distribution/sigma_mean_m": metric_values["sigma_mean"],
+            "Foothold/Distribution/calibration_error": metric_values[
+                "calibration_error"
+            ],
+            "Foothold/Guidance/reward_enabled": float(self.reward_enabled),
         }
 
     def state_dict(self) -> dict:
@@ -290,7 +201,7 @@ class FootholdPredictorTrainer:
         if state.get("grid_signature") != self.grid.signature:
             raise RuntimeError(
                 "Foothold predictor checkpoint uses a different output distribution; "
-                "the reachable-grid predictor must be trained from scratch."
+                "the Gaussian predictor must be trained from scratch."
             )
         if int(state["input_dim"]) != self.input_dim:
             raise RuntimeError(

@@ -5,18 +5,23 @@ from robolab.tasks.manager_based.amp.agents.rpo_amp_agent_cfg import (
     RslRlAmpCfg,
     RslRlPpoAmpAlgorithmCfg,
 )
+from robolab.tasks.manager_based.parkour.mdp.foothold_prediction import (
+    FootholdGridCfg,
+    FootholdPredictorCfg,
+)
 from robolab.tasks.manager_based.parkour.mdp.symmetry import rp1
 
 
 @configclass
-class RslRlPpoEncoderMoEActorCriticCfg:
-    class_name: str = "EncoderMoEActorCritic"
+class RslRlPpoEncoderMoEActorMultiCriticCfg:
+    class_name: str = "EncoderMoEActorMultiCritic"
     init_noise_std: float = 1.0
-    num_moe_experts: int = 4
-    moe_gate_hidden_dims: list[int] = []
+    num_moe_experts: int = 5
+    # SSR Table 8: Expert MLP [1024, 512, 128], Gate MLP hidden size 128.
+    moe_gate_hidden_dims: list[int] = [128]
     actor_hidden_dims: list[int] = [256, 128, 64]
-    critic_hidden_dims: list[int] = [256, 128, 64]
-    actor_obs_normalization: bool = False  # NOTE!: DO NOT SET TO TRUE, OR IT WILL CAUSE THE ROBOT TO CRASH IN REAL-WORLD DEPLOYMENT CAUSE WE USE THE LATENT ENCODER FOR DEPTH OBSERVATIONS!
+    critic_hidden_dims: list[int] = [512, 256, 128]
+    actor_obs_normalization: bool = False
     critic_obs_normalization: bool = False
     activation: str = "elu"
     actor_encoder_obs_groups: list[str] = ["depth_image"]
@@ -38,22 +43,53 @@ class RslRlPpoEncoderMoEActorCriticCfg:
 
 
 @configclass
-class RP1ParkourAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
+class RslRlMultiRewardPpoAmpAlgorithmCfg(RslRlPpoAmpAlgorithmCfg):
+    class_name: str = "MultiRewardPPOAMP"
+    num_reward_heads: int = 3
+    advantage_weights: list[float] = [1.0, 0.25, 0.2]
+
+
+@configclass
+class RP1ParkourSSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     class_name = "AMPRunner"
     num_steps_per_env = 24
     max_iterations = 30000
     save_interval = 500
-    experiment_name = "rp1_parkour"
-    wandb_project = "rp1_parkour"
+    experiment_name = "rp1_parkour_ssr"
+    wandb_project = "rp1_parkour_ssr"
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
         "discriminator": ["disc"],
         "discriminator_demonstration": ["disc_demo"],
     }
-    policy = RslRlPpoEncoderMoEActorCriticCfg()
-    algorithm = RslRlPpoAmpAlgorithmCfg(
-        class_name="PPOAMP",
+    policy = RslRlPpoEncoderMoEActorMultiCriticCfg()
+    foothold_imagination: FootholdPredictorCfg = FootholdPredictorCfg(
+        enabled=True,
+        hidden_dims=[256, 128],
+        learning_rate=5.0e-4,
+        weight_decay=1.0e-5,
+        ema_decay=0.99,
+        grid=FootholdGridCfg(
+            sigma_min=0.01,
+            sigma_max=0.25,
+            expectation_grid_size=5,
+            expectation_std_range=2.0,
+            expectation_eval_chunk_size=64,
+        ),
+        nll_loss_coef=1.0,
+        max_pending_steps=48,
+        pending_sample_stride=1,
+        train_pending_tail_steps=12,
+        train_buffer_capacity=100_000,
+        batch_size=4096,
+        updates_per_iteration=8,
+        min_train_samples=25_000,
+        curriculum_level_threshold=1.0,
+        enable_xy_rmse_threshold=0.05,
+        clear_train_buffer_on_resume=True,
+    )
+    algorithm = RslRlMultiRewardPpoAmpAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,

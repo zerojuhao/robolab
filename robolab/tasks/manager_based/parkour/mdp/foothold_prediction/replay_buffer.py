@@ -52,3 +52,8 @@ class FootholdReplayBuffer:
             self.targets[indices],
             self.foot_ids[indices],
         )
+
+    def clear(self) -> None:
+        """Drop all stored samples (e.g. after terrain curriculum shifts on resume)."""
+        self.write_index = 0
+        self.size = 0

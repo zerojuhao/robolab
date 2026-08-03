@@ -20,13 +20,20 @@ from robolab.tasks.manager_based.parkour.mdp.foothold_imagination import (
 )
 
 
+_SSR_REWARD_GROUPS = ("locomotion", "foothold")
+
+
 def _reward_dict_to_vector(rew: dict[str, torch.Tensor]) -> torch.Tensor:
-    """Stack multi-group rewards for RSL-RL, which expects a tensor (usually one column)."""
-    tensors = tuple(rew.values())
-    if not tensors:
-        raise ValueError("MultiRewardManager produced an empty reward dict.")
-    # Single group 鈫?(num_envs,) as before; multiple groups 鈫?(num_envs, num_groups)
-    out = torch.stack(tensors, dim=-1)
+    """Stack reward groups in the fixed SSR critic-head order."""
+    keys = tuple(rew.keys())
+    if keys == ("locomotion",):
+        return rew["locomotion"]
+    if keys != _SSR_REWARD_GROUPS:
+        raise RuntimeError(
+            f"Expected reward groups ('locomotion',) or {_SSR_REWARD_GROUPS}, got {keys}. "
+            "Reward order must match the multi-critic heads."
+        )
+    out = torch.stack(tuple(rew[name] for name in _SSR_REWARD_GROUPS), dim=-1)
     return out.squeeze(-1) if out.shape[-1] == 1 else out
 
 
@@ -78,10 +85,15 @@ class ParkourEnv(AmpEnv):
         return obs, rew, terminated, truncated, extras
 
     def prepare_foothold_prediction_step(
-        self, privileged_state: torch.Tensor, action: torch.Tensor
+        self,
+        privileged_state: torch.Tensor,
+        action: torch.Tensor,
+        enable_inference_guidance: bool = False,
     ) -> None:
         """Capture the SSR privileged state and current action before simulation advances."""
         if self.foothold_guidance is not None:
+            if enable_inference_guidance:
+                self.foothold_guidance.enable_inference_guidance()
             self.foothold_guidance.prepare_step(privileged_state, action)
 
     def update_foothold_predictor(self) -> dict[str, float]:

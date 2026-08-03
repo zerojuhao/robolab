@@ -10,24 +10,18 @@ from isaaclab.utils import configclass
 
 @configclass
 class FootholdGridCfg:
-    """Compact reachable-region grid in the robot base frame for both feet.
+    """Distribution bounds and quadrature for Gaussian foothold predictions.
 
-    Lattice points are generated inside the tight bounding box of the mirrored
-    reach ellipses; only cells that fall inside at least one foot ellipse are
-    retained.  The network predicts logits over this compact set directly.
+    The Gaussian mean is an unconstrained base-frame XY value, as in SSR. The
+    support expectation is approximated with a square grid in normalized
+    standard-deviation coordinates.
     """
 
-    resolution: float = MISSING
-    reach_center: tuple[float, float] = MISSING
-    reach_radii: tuple[float, float] = MISSING
-    # Rank every reachable cell by terrain support quality and retain the best K.
-    reward_quality_top_k: int = 64
-    # Bound peak raycast memory while still evaluating the full reachable set.
-    reward_quality_eval_chunk_size: int = 64
-    # Unsupported cost assigned to probability mass outside the quality Top-K.
-    reward_unselected_mass_penalty: float = 1.0
-    # Residual half-width in units of ``resolution`` (1.0 => ± one cell).
-    residual_span_cells: float = 1.0
+    sigma_min: float = 0.01
+    sigma_max: float = 0.25
+    expectation_grid_size: int = 5
+    expectation_std_range: float = 2.0
+    expectation_eval_chunk_size: int = 64
 
 
 @configclass
@@ -40,15 +34,7 @@ class FootholdPredictorCfg:
     weight_decay: float = MISSING
     ema_decay: float = MISSING
     grid: FootholdGridCfg = MISSING
-    # L = classification_loss_coef * CE + residual_loss_coef * L_residual
-    classification_loss_coef: float = 1.0
-    residual_loss_coef: float = MISSING
-    # Relative weight for residual loss on 4-neighbor cells (GT cell weight is 1).
-    residual_neighbor_weight: float = 0.25
-    # Soft CE mass on each 4-neighbor relative to GT (=1). 0 => hard one-hot CE.
-    ce_neighbor_weight: float = 0.0
-    # If True, CE is averaged only over in-reach touchdown labels.
-    classify_in_reach_only: bool = True
+    nll_loss_coef: float = 1.0
     max_pending_steps: int = MISSING
     pending_sample_stride: int = MISSING
     # Keep only the last K pending swing steps when labeling touchdown (≤0 => keep all).
@@ -58,15 +44,33 @@ class FootholdPredictorCfg:
     updates_per_iteration: int = MISSING
     min_train_samples: int = MISSING
     curriculum_level_threshold: float = MISSING
-    # Enable foothold reward once mode XY RMSE (meters) falls below this.
+    # Enable guidance after the Gaussian mean reaches this XY RMSE.
     enable_xy_rmse_threshold: float = MISSING
+    # Drop replay samples when loading a checkpoint (avoids stale terrain labels).
+    clear_train_buffer_on_resume: bool = True
 
 
 def normalize_foothold_grid_cfg(cfg: FootholdGridCfg | Mapping) -> FootholdGridCfg:
     if isinstance(cfg, FootholdGridCfg):
         return cfg
     if isinstance(cfg, Mapping):
-        return FootholdGridCfg(**dict(cfg))
+        values = dict(cfg)
+        # Drop legacy categorical-grid / point-regression keys.
+        for legacy in (
+            "resolution",
+            "reach_center",
+            "reach_radii",
+            "reach_x_min",
+            "reward_quality_top_k",
+            "reward_quality_eval_chunk_size",
+            "reward_unselected_mass_penalty",
+            "reward_quality_use_forward_window",
+            "reward_quality_forward_window_rear_m",
+            "reward_quality_forward_window_forward_m",
+            "residual_span_cells",
+        ):
+            values.pop(legacy, None)
+        return FootholdGridCfg(**values)
     raise TypeError(f"Unsupported foothold grid config type: {type(cfg)!r}")
 
 
@@ -78,5 +82,15 @@ def normalize_foothold_predictor_cfg(
     if isinstance(cfg, Mapping):
         values = dict(cfg)
         values["grid"] = normalize_foothold_grid_cfg(values["grid"])
+        for legacy in (
+            "classification_loss_coef",
+            "residual_loss_coef",
+            "residual_neighbor_weight",
+            "ce_neighbor_weight",
+            "classify_in_reach_only",
+            "regress_in_reach_only",
+            "regression_loss_coef",
+        ):
+            values.pop(legacy, None)
         return FootholdPredictorCfg(**values)
     raise TypeError(f"Unsupported foothold predictor config type: {type(cfg)!r}")

@@ -64,10 +64,27 @@ def _masked_zero(values: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
 
 
 def _pose_ok(candidate_xy_w: torch.Tensor, foot_yaw: torch.Tensor) -> torch.Tensor:
-    """Per-candidate mask: world XY and foot yaw are all finite."""
-    return torch.isfinite(candidate_xy_w).all(dim=-1) & torch.isfinite(
-        foot_yaw
-    ).unsqueeze(-1)
+    """Per-sample mask: world XY and foot yaw are all finite."""
+    return torch.isfinite(candidate_xy_w).all(dim=-1) & torch.isfinite(foot_yaw)
+
+
+def world_xy_to_base_xy(
+    base_frames: torch.Tensor, world_xy: torch.Tensor
+) -> torch.Tensor:
+    """Map world XY into the yaw-aligned base frame stored in ``base_frames``.
+
+    Args:
+        base_frames: ``[..., 5]`` with ``(x, y, z, cos_yaw, sin_yaw)``.
+        world_xy: ``[..., 2]`` world XY; leading dims must broadcast with frames.
+    """
+    dx = world_xy[..., 0] - base_frames[..., 0]
+    dy = world_xy[..., 1] - base_frames[..., 1]
+    cos_yaw = base_frames[..., 3]
+    sin_yaw = base_frames[..., 4]
+    return torch.stack(
+        (cos_yaw * dx + sin_yaw * dy, -sin_yaw * dx + cos_yaw * dy),
+        dim=-1,
+    )
 
 
 class FootholdSupportEvaluator:
@@ -136,220 +153,44 @@ class FootholdSupportEvaluator:
             )
         return weights
 
-
-    def _geometry_from_indices(
+    def _geometry_from_xy_b(
         self,
-        candidate_indices: torch.Tensor,
-        residuals_all: torch.Tensor,
-        grid_points: torch.Tensor,
+        xy_b: torch.Tensor,
         base_frames: torch.Tensor,
         foot_yaws: torch.Tensor,
         env_ids: torch.Tensor,
         foot_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Raycast sole heights at residual-refined cells. Returns xy, yaw, heights, frames."""
-        residuals = residuals_all[env_ids, foot_ids]
-        candidate_residuals = torch.gather(
-            residuals, 1, candidate_indices.unsqueeze(-1).expand(-1, -1, 2)
-        )
-        candidate_xy_b = grid_points[candidate_indices] + candidate_residuals
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Raycast sole heights at predicted base-frame XY. Returns xy_w, yaw, heights."""
         frames = base_frames[env_ids]
         foot_yaw = foot_yaws[env_ids, foot_ids]
-
-        cos_base = frames[:, 3, None]
-        sin_base = frames[:, 4, None]
-        candidate_xy_w = torch.stack(
+        cos_base = frames[:, 3]
+        sin_base = frames[:, 4]
+        xy_w = torch.stack(
             (
-                frames[:, 0, None]
-                + cos_base * candidate_xy_b[..., 0]
-                - sin_base * candidate_xy_b[..., 1],
-                frames[:, 1, None]
-                + sin_base * candidate_xy_b[..., 0]
-                + cos_base * candidate_xy_b[..., 1],
+                frames[:, 0] + cos_base * xy_b[:, 0] - sin_base * xy_b[:, 1],
+                frames[:, 1] + sin_base * xy_b[:, 0] + cos_base * xy_b[:, 1],
             ),
             dim=-1,
         )
 
         offsets_w = self._sole_offsets_w(foot_ids, foot_yaw)
-        num_pairs, num_candidates = candidate_xy_w.shape[:2]
+        num_pairs = xy_w.shape[0]
         num_sole_points = offsets_w.shape[1]
-        ray_starts = torch.zeros(
-            num_pairs, num_candidates, num_sole_points, 3, device=self.device
-        )
-        ray_starts[..., :2] = candidate_xy_w[:, :, None, :] + offsets_w[:, None, :, :]
-        ray_starts[..., 2] = frames[:, 2, None, None] + self.cfg.ray_start_height
+        ray_starts = torch.zeros(num_pairs, num_sole_points, 3, device=self.device)
+        ray_starts[..., :2] = xy_w[:, None, :] + offsets_w
+        ray_starts[..., 2] = frames[:, 2, None] + self.cfg.ray_start_height
         ray_directions = torch.zeros_like(ray_starts)
         ray_directions[..., 2] = -1.0
 
         ray_hits, _, _, _ = raycast_mesh(
-            ray_starts.reshape(num_pairs, -1, 3),
-            ray_directions.reshape(num_pairs, -1, 3),
+            ray_starts,
+            ray_directions,
             mesh=self.terrain_mesh,
             max_dist=self.cfg.ray_max_distance,
         )
-        heights = ray_hits[..., 2].view(num_pairs, num_candidates, num_sole_points)
-        return candidate_xy_w, foot_yaw, heights, frames
+        return xy_w, foot_yaw, ray_hits[..., 2]
 
-    def _reachable_candidate_indices(
-        self,
-        reachable_mask: torch.Tensor,
-        foot_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return every reachable cell id per foot plus a padding mask."""
-        reachable_counts = reachable_mask.sum(dim=-1)
-        max_candidates = int(reachable_counts.max().item())
-        num_pairs = foot_ids.shape[0]
-        candidate_indices = torch.empty(
-            num_pairs, max_candidates, dtype=torch.long, device=self.device
-        )
-        candidate_mask = torch.zeros(
-            num_pairs, max_candidates, dtype=torch.bool, device=self.device
-        )
-        for current_foot_id in range(2):
-            pair_mask = foot_ids == current_foot_id
-            if not pair_mask.any():
-                continue
-            cell_ids = reachable_mask[current_foot_id].nonzero(
-                as_tuple=False
-            ).squeeze(-1)
-            count = int(cell_ids.numel())
-            candidate_indices[pair_mask, :count] = cell_ids
-            candidate_indices[pair_mask, count:] = cell_ids[0]
-            candidate_mask[pair_mask, :count] = True
-        return candidate_indices, candidate_mask
-
-    def _quality_topk_candidates(
-        self,
-        probabilities_all: torch.Tensor,
-        reachable_mask: torch.Tensor,
-        grid_points: torch.Tensor,
-        residuals_all: torch.Tensor,
-        quality_top_k: int,
-        quality_eval_chunk_size: int,
-        base_frames: torch.Tensor,
-        foot_yaws: torch.Tensor,
-        env_ids: torch.Tensor,
-        foot_ids: torch.Tensor,
-        point_weights: torch.Tensor | None = None,
-    ) -> tuple[
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-    ]:
-        """Select global support-quality Top-K after evaluating all reachable cells."""
-        candidate_indices, candidate_mask = self._reachable_candidate_indices(
-            reachable_mask, foot_ids
-        )
-        probabilities = probabilities_all[env_ids, foot_ids]
-        num_pairs, num_candidates = candidate_indices.shape
-        quality_top_k = int(quality_top_k)
-        chunk_size = int(quality_eval_chunk_size)
-        num_sole_points = self.sole_offsets[0].shape[0]
-
-        best_scores = torch.full(
-            (num_pairs, quality_top_k), torch.inf, device=self.device
-        )
-        best_xy_w = torch.zeros(
-            num_pairs, quality_top_k, 2, device=self.device
-        )
-        best_heights = torch.zeros(
-            num_pairs, quality_top_k, num_sole_points, device=self.device
-        )
-        best_probabilities = torch.zeros(
-            num_pairs, quality_top_k, device=self.device
-        )
-        best_deficiency = torch.ones(
-            num_pairs, quality_top_k, device=self.device
-        )
-        foot_yaw = foot_yaws[env_ids, foot_ids]
-
-        for start in range(0, num_candidates, chunk_size):
-            end = min(start + chunk_size, num_candidates)
-            chunk_indices = candidate_indices[:, start:end]
-            chunk_mask = candidate_mask[:, start:end]
-            chunk_xy_w, _, chunk_heights, _ = self._geometry_from_indices(
-                chunk_indices,
-                residuals_all,
-                grid_points,
-                base_frames,
-                foot_yaws,
-                env_ids,
-                foot_ids,
-            )
-            chunk_probabilities = torch.gather(
-                probabilities, 1, chunk_indices
-            )
-            support_plane = self._support_plane_from_heights(chunk_heights)
-            foot_z = (support_plane + self.cfg.height_offset).unsqueeze(-1)
-            chunk_deficiency = soft_absolute_clearance_unsupported(
-                foot_z,
-                chunk_heights,
-                height_offset=self.cfg.height_offset,
-                height_tolerance=self.cfg.height_tolerance,
-                transition_width=self.cfg.support_transition_width,
-                point_weights=point_weights,
-            )
-            chunk_deficiency = torch.nan_to_num(
-                chunk_deficiency, nan=1.0, posinf=1.0, neginf=1.0
-            ).clamp(0.0, 1.0)
-            chunk_deficiency = torch.where(
-                _pose_ok(chunk_xy_w, foot_yaw),
-                chunk_deficiency,
-                torch.ones_like(chunk_deficiency),
-            )
-            # Probability only breaks numerical quality ties; it cannot override a
-            # meaningfully lower support deficiency.
-            quality_tie_break = 1.0e-6 * chunk_probabilities
-            chunk_scores = torch.where(
-                chunk_mask,
-                chunk_deficiency - quality_tie_break,
-                torch.full_like(chunk_deficiency, torch.inf),
-            )
-            merged_scores = torch.cat((best_scores, chunk_scores), dim=1)
-            merged_xy_w = torch.cat((best_xy_w, chunk_xy_w), dim=1)
-            merged_heights = torch.cat((best_heights, chunk_heights), dim=1)
-            merged_probabilities = torch.cat(
-                (best_probabilities, chunk_probabilities), dim=1
-            )
-            merged_deficiency = torch.cat(
-                (best_deficiency, chunk_deficiency), dim=1
-            )
-            selected_indices = torch.topk(
-                merged_scores,
-                k=quality_top_k,
-                dim=-1,
-                largest=False,
-                sorted=False,
-            ).indices
-            best_scores = torch.gather(merged_scores, 1, selected_indices)
-            best_xy_w = torch.gather(
-                merged_xy_w,
-                1,
-                selected_indices.unsqueeze(-1).expand(-1, -1, 2),
-            )
-            best_heights = torch.gather(
-                merged_heights,
-                1,
-                selected_indices.unsqueeze(-1).expand(
-                    -1, -1, num_sole_points
-                ),
-            )
-            best_probabilities = torch.gather(
-                merged_probabilities, 1, selected_indices
-            )
-            best_deficiency = torch.gather(
-                merged_deficiency, 1, selected_indices
-            )
-
-        return (
-            best_xy_w,
-            foot_yaw,
-            best_heights,
-            best_probabilities,
-            best_deficiency,
-        )
     def _contact_terrain_heights(
         self,
         foot_pos_w: torch.Tensor,
@@ -380,7 +221,7 @@ class FootholdSupportEvaluator:
         foot_yaws: torch.Tensor,
         foot_ids: torch.Tensor,
     ) -> torch.Tensor:
-        """Mean per-foot support using the ``feet_at_plane`` clearance kernel (uniform sole weights)."""
+        """Mean per-foot support using the ``feet_at_plane`` clearance kernel."""
         terrain_heights = self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids)
         unsupported = _finite_or_zero(
             soft_absolute_clearance_unsupported(
@@ -399,21 +240,10 @@ class FootholdSupportEvaluator:
         foot_pos_w: torch.Tensor,
         foot_yaws: torch.Tensor,
         foot_ids: torch.Tensor,
-        family_ids: torch.Tensor,
-        enable_terrain_foot_weights: bool = True,
-        stairs_weight_min: float = 0.0,
-        stairs_weight_max: float = 1.0,
+        point_weights: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Absolute soft clearance unsupported fraction at real foot poses (``[0, 1]``)."""
+        """Unsupported sole fraction at real contacts."""
         terrain_heights = self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids)
-        point_w = None
-        if enable_terrain_foot_weights:
-            point_w = self._sole_terrain_point_weights(
-                foot_ids,
-                family_ids,
-                stairs_weight_min,
-                stairs_weight_max,
-            )
         return _finite_or_zero(
             soft_absolute_clearance_unsupported(
                 foot_pos_w[:, 2].unsqueeze(-1),
@@ -421,18 +251,13 @@ class FootholdSupportEvaluator:
                 height_offset=self.cfg.height_offset,
                 height_tolerance=self.cfg.height_tolerance,
                 transition_width=self.cfg.support_transition_width,
-                point_weights=point_w,
+                point_weights=point_weights,
             )
         )
 
     def support_deficiency(
         self,
-        probabilities_all: torch.Tensor,
-        reachable_mask: torch.Tensor,
-        grid_points: torch.Tensor,
-        residuals_all: torch.Tensor,
-        quality_top_k: int,
-        quality_eval_chunk_size: int,
+        predicted_xy_b: torch.Tensor,
         base_frames: torch.Tensor,
         foot_yaws: torch.Tensor,
         env_ids: torch.Tensor,
@@ -441,15 +266,37 @@ class FootholdSupportEvaluator:
         enable_terrain_foot_weights: bool = True,
         stairs_weight_min: float = 0.0,
         stairs_weight_max: float = 1.0,
-        unselected_mass_penalty: float = 1.0,
     ) -> torch.Tensor:
-        """Score quality Top-K support and penalize probability mass outside it.
+        """Unsupported sole fraction at the predicted single foothold per swing foot."""
+        xy_b = predicted_xy_b[env_ids, foot_ids]
+        return self._support_deficiency_for_xy(
+            xy_b,
+            base_frames,
+            foot_yaws,
+            env_ids,
+            foot_ids,
+            family_ids=family_ids,
+            enable_terrain_foot_weights=enable_terrain_foot_weights,
+            stairs_weight_min=stairs_weight_min,
+            stairs_weight_max=stairs_weight_max,
+        )
 
-        Every reachable cell is evaluated for support quality. The best K cells are
-        retained independently of predictor probability, then their raw probability
-        mass weights the support deficiency. Probability outside the quality Top-K
-        is charged ``unselected_mass_penalty`` (default 1 = fully unsupported).
-        """
+    def _support_deficiency_for_xy(
+        self,
+        xy_b: torch.Tensor,
+        base_frames: torch.Tensor,
+        foot_yaws: torch.Tensor,
+        env_ids: torch.Tensor,
+        foot_ids: torch.Tensor,
+        family_ids: torch.Tensor | None = None,
+        enable_terrain_foot_weights: bool = True,
+        stairs_weight_min: float = 0.0,
+        stairs_weight_max: float = 1.0,
+    ) -> torch.Tensor:
+        """Unsupported fraction for an aligned list of base-frame XY candidates."""
+        xy_w, foot_yaw, heights = self._geometry_from_xy_b(
+            xy_b, base_frames, foot_yaws, env_ids, foot_ids
+        )
         point_w = None
         if enable_terrain_foot_weights and family_ids is not None:
             point_w = self._sole_terrain_point_weights(
@@ -458,32 +305,83 @@ class FootholdSupportEvaluator:
                 stairs_weight_min,
                 stairs_weight_max,
             )
-        (
-            _,
-            _,
-            _,
-            selected_p,
-            selected_deficiency,
-        ) = self._quality_topk_candidates(
-            probabilities_all,
-            reachable_mask,
-            grid_points,
-            residuals_all,
-            quality_top_k,
-            quality_eval_chunk_size,
-            base_frames,
-            foot_yaws,
-            env_ids,
-            foot_ids,
+        support_plane = self._support_plane_from_heights(heights)
+        foot_z = (support_plane + self.cfg.height_offset).unsqueeze(-1)
+        deficiency = soft_absolute_clearance_unsupported(
+            foot_z,
+            heights,
+            height_offset=self.cfg.height_offset,
+            height_tolerance=self.cfg.height_tolerance,
+            transition_width=self.cfg.support_transition_width,
             point_weights=point_w,
         )
-        evaluated = (selected_p * selected_deficiency).sum(dim=-1)
-        selected_mass = selected_p.sum(dim=-1)
-        unselected_mass = (1.0 - selected_mass).clamp(0.0, 1.0)
-        return _finite_or_zero(
-            evaluated + unselected_mass * float(unselected_mass_penalty)
+        deficiency = torch.nan_to_num(
+            deficiency, nan=1.0, posinf=1.0, neginf=1.0
+        ).clamp(0.0, 1.0)
+        deficiency = torch.where(
+            _pose_ok(xy_w, foot_yaw), deficiency, torch.ones_like(deficiency)
         )
+        return _finite_or_zero(deficiency)
 
+    def expected_support_deficiency(
+        self,
+        candidate_xy_b: torch.Tensor,
+        candidate_weights: torch.Tensor,
+        base_frames: torch.Tensor,
+        foot_yaws: torch.Tensor,
+        env_ids: torch.Tensor,
+        foot_ids: torch.Tensor,
+        family_ids: torch.Tensor | None = None,
+        enable_terrain_foot_weights: bool = True,
+        stairs_weight_min: float = 0.0,
+        stairs_weight_max: float = 1.0,
+        eval_chunk_size: int = 64,
+    ) -> torch.Tensor:
+        """Expected deficiency over discrete Gaussian candidates.
+
+        ``candidate_xy_b`` and ``candidate_weights`` have shapes ``[P,G,2]`` and
+        ``[P,G]`` for P environment-foot pairs and G quadrature samples.
+        """
+        num_pairs, num_candidates = candidate_weights.shape
+        if num_pairs == 0:
+            return torch.zeros(0, device=self.device)
+        if candidate_xy_b.shape != (num_pairs, num_candidates, 2):
+            raise ValueError(
+                "candidate_xy_b must have shape [P,G,2] matching candidate_weights."
+            )
+        weights = torch.nan_to_num(
+            candidate_weights, nan=0.0, posinf=0.0, neginf=0.0
+        ).clamp_min(0.0)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0e-8)
+        expected = torch.zeros(num_pairs, device=self.device)
+        chunk_size = max(int(eval_chunk_size), 1)
+        for start in range(0, num_pairs, chunk_size):
+            end = min(start + chunk_size, num_pairs)
+            pair_count = end - start
+            chunk_env_ids = env_ids[start:end]
+            chunk_foot_ids = foot_ids[start:end]
+            flat_xy = candidate_xy_b[start:end].reshape(-1, 2)
+            flat_env_ids = (
+                chunk_env_ids[:, None].expand(-1, num_candidates).reshape(-1)
+            )
+            flat_foot_ids = (
+                chunk_foot_ids[:, None].expand(-1, num_candidates).reshape(-1)
+            )
+            flat_deficiency = self._support_deficiency_for_xy(
+                flat_xy,
+                base_frames,
+                foot_yaws,
+                flat_env_ids,
+                flat_foot_ids,
+                family_ids=family_ids,
+                enable_terrain_foot_weights=enable_terrain_foot_weights,
+                stairs_weight_min=stairs_weight_min,
+                stairs_weight_max=stairs_weight_max,
+            ).view(pair_count, num_candidates)
+            expected[start:end] = (
+                weights[start:end] * flat_deficiency
+            ).sum(dim=-1)
+        return _finite_or_zero(expected).clamp(0.0, 1.0)
 
     @staticmethod
     def _terrain_foot_point_weights(
@@ -495,7 +393,7 @@ class FootholdSupportEvaluator:
         stairs_weight_max: float,
     ) -> torch.Tensor:
         """Per-pair point weights matching ``volume_points_penetration_feet``."""
-        del x_min, x_max  # derived inside shared helper from local_x
+        del x_min, x_max
         return terrain_foot_point_weights(
             local_points[:, 0],
             family_ids,
@@ -505,12 +403,7 @@ class FootholdSupportEvaluator:
 
     def edge_penetration(
         self,
-        probabilities_all: torch.Tensor,
-        reachable_mask: torch.Tensor,
-        grid_points: torch.Tensor,
-        residuals_all: torch.Tensor,
-        quality_top_k: int,
-        quality_eval_chunk_size: int,
+        predicted_xy_b: torch.Tensor,
         base_frames: torch.Tensor,
         foot_yaws: torch.Tensor,
         env_ids: torch.Tensor,
@@ -526,61 +419,29 @@ class FootholdSupportEvaluator:
         stairs_weight_max: float = 1.0,
         tolerance: float = 0.0,
     ) -> torch.Tensor:
-        """Expected virtual-edge penetration over the support-quality Top-K.
-
-        Places the foot volume-point cloud so the sole bottom rests on the raycast
-        support plane, then queries the same virtual obstacles used by
-        ``volume_points_penetration_feet``. No velocity term (static imagined pose).
-        Candidate selection is identical to ``support_deficiency``.
-        """
-        support_point_w = None
-        if enable_terrain_foot_weights:
-            support_point_w = self._sole_terrain_point_weights(
-                foot_ids,
-                family_ids[env_ids],
-                stairs_weight_min,
-                stairs_weight_max,
-            )
-        (
-            candidate_xy_w,
-            foot_yaw,
-            candidate_heights,
-            candidate_weights,
-            _,
-        ) = self._quality_topk_candidates(
-            probabilities_all,
-            reachable_mask,
-            grid_points,
-            residuals_all,
-            quality_top_k,
-            quality_eval_chunk_size,
-            base_frames,
-            foot_yaws,
-            env_ids,
-            foot_ids,
-            point_weights=support_point_w,
+        """Virtual-edge penetration at the predicted single foothold."""
+        xy_b = predicted_xy_b[env_ids, foot_ids]
+        xy_w, foot_yaw, heights = self._geometry_from_xy_b(
+            xy_b, base_frames, foot_yaws, env_ids, foot_ids
         )
-        support_plane = self._support_plane_from_heights(candidate_heights)
+        support_plane = self._support_plane_from_heights(heights)
         support_plane = torch.where(
-            _pose_ok(candidate_xy_w, foot_yaw),
+            _pose_ok(xy_w, foot_yaw),
             support_plane,
             torch.full_like(support_plane, _MISS_PLANE_Z),
         )
-        num_pairs, num_candidates, _ = candidate_xy_w.shape
+        num_pairs = xy_w.shape[0]
         num_points = local_volume_points.shape[0]
         if num_pairs == 0 or num_points == 0 or not virtual_obstacles:
             return torch.zeros(num_pairs, device=self.device)
 
-        valid_plane = _is_valid_plane(support_plane) & torch.isfinite(
-            candidate_xy_w
-        ).all(dim=-1)
+        valid_plane = _is_valid_plane(support_plane) & torch.isfinite(xy_w).all(dim=-1)
         ankle_z = torch.where(
             valid_plane, support_plane - volume_z_min, torch.zeros_like(support_plane)
         )
         foot_yaw = _finite_or_zero(foot_yaw)
-        xy = _finite_or_zero(candidate_xy_w)
+        xy = _finite_or_zero(xy_w)
 
-        # foot_yaw: [P] → offsets [P, N]; xy/ankle: [P, K] → points [P, K, N, 3]
         cos_foot = torch.cos(foot_yaw).unsqueeze(-1)
         sin_foot = torch.sin(foot_yaw).unsqueeze(-1)
         lx, ly, lz = local_volume_points.unbind(dim=-1)
@@ -588,9 +449,9 @@ class FootholdSupportEvaluator:
         offset_y = sin_foot * lx + cos_foot * ly
         points_w = torch.stack(
             (
-                xy[..., 0, None] + offset_x[:, None, :],
-                xy[..., 1, None] + offset_y[:, None, :],
-                ankle_z[..., None] + lz,
+                xy[:, 0:1] + offset_x,
+                xy[:, 1:2] + offset_y,
+                ankle_z.unsqueeze(-1) + lz,
             ),
             dim=-1,
         )
@@ -601,7 +462,7 @@ class FootholdSupportEvaluator:
         for obstacle in virtual_obstacles.values():
             offset = _finite_or_zero(obstacle.get_points_penetration_offset(flat_points))
             pen_depth = torch.maximum(pen_depth, torch.norm(offset, dim=-1))
-        pen_depth = pen_depth.view(num_pairs, num_candidates, num_points)
+        pen_depth = pen_depth.view(num_pairs, num_points)
         pen_depth = pen_depth * (pen_depth > tolerance).to(pen_depth.dtype)
         pen_depth = _masked_zero(pen_depth, valid_plane)
 
@@ -614,8 +475,6 @@ class FootholdSupportEvaluator:
                 stairs_weight_min,
                 stairs_weight_max,
             )
-            pen_depth = pen_depth * point_w[:, None, :]
+            pen_depth = pen_depth * point_w
 
-        return _finite_or_zero(
-            torch.sum(candidate_weights * pen_depth.sum(dim=-1), dim=-1)
-        )
+        return _finite_or_zero(pen_depth.sum(dim=-1))

@@ -27,7 +27,7 @@ from .foothold_prediction import (
     normalize_foothold_predictor_cfg,
     normalize_foothold_support_cfg,
 )
-from .terrain_family import DISCRETE_FAMILY_ID, STAIRS_FAMILY_IDS, get_terrain_family_ids
+from .terrain_family import get_terrain_family_ids
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -39,15 +39,6 @@ __all__ = [
     "imagined_foothold_edge_penetration",
     "imagined_foothold_guidance",
 ]
-
-
-def _discrete_or_stairs_mask(family_ids: torch.Tensor) -> torch.Tensor:
-    """Return the terrain mask where foothold training and rewards are enabled."""
-    return (
-        (family_ids == DISCRETE_FAMILY_ID)
-        | (family_ids == STAIRS_FAMILY_IDS[0])
-        | (family_ids == STAIRS_FAMILY_IDS[1])
-    )
 
 
 class FootholdImaginationManager:
@@ -84,11 +75,23 @@ class FootholdImaginationManager:
         self._contact_support_stats = torch.zeros(
             2, dtype=torch.float64, device=self.device
         )
+        self._guidance_stance_deficiency_stats = torch.zeros(
+            2, dtype=torch.float64, device=self.device
+        )
+        self._guidance_swing_deficiency_stats = torch.zeros(
+            2, dtype=torch.float64, device=self.device
+        )
+        self._guidance_reward_stats = torch.zeros(
+            2, dtype=torch.float64, device=self.device
+        )
         self._terrain_ready_mask = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
         )
-        self._latest_probabilities: torch.Tensor | None = None
-        self._latest_residuals: torch.Tensor | None = None
+        self._prediction_valid = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        self._latest_mu_b: torch.Tensor | None = None
+        self._latest_sigma: torch.Tensor | None = None
         self._latest_base_frame: torch.Tensor | None = None
         self._latest_foot_yaw: torch.Tensor | None = None
         self._prepared = False
@@ -194,6 +197,10 @@ class FootholdImaginationManager:
         """Return the globally gated mask shared by every terrain."""
         return self._terrain_ready_mask
 
+    def enable_inference_guidance(self) -> None:
+        """Enable guidance for evaluation after loading a trained predictor."""
+        self._terrain_ready_mask.fill_(True)
+
     def prepare_step(
         self, privileged_state: torch.Tensor, action: torch.Tensor
     ) -> None:
@@ -216,8 +223,7 @@ class FootholdImaginationManager:
         )
         swing = ~contact
         terrain_ready = self._terrain_ready()
-        training_terrain = _discrete_or_stairs_mask(get_terrain_family_ids(self.env))
-        training_ready = terrain_ready & training_terrain
+        training_ready = terrain_ready
 
         if self._step_counter % max(self.cfg.pending_sample_stride, 1) == 0:
             for foot_id in range(2):
@@ -237,26 +243,26 @@ class FootholdImaginationManager:
                     ]
                     self._pending_counts[env_ids, foot_id] += 1
 
-        (
-            self._latest_probabilities,
-            self._latest_residuals,
-        ) = self.trainer.predict(predictor_input)
+        self._latest_mu_b, self._latest_sigma = self.trainer.predict(predictor_input)
         self._latest_base_frame = base_frame
         self._latest_foot_yaw = foot_yaw
+        self._prediction_valid.fill_(True)
         self._prepared = True
         self._step_counter += 1
 
     def _record_contact_support(
         self, events: torch.Tensor, foot_pos_w: torch.Tensor
     ) -> None:
-        """Accumulate real touchdown support metrics on gap and stair terrains."""
+        """Accumulate real touchdown support metrics outside slope terrains."""
         if events.numel() == 0:
             return
 
         env_ids = events[:, 0]
         foot_ids = events[:, 1]
         family_ids = get_terrain_family_ids(self.env)[env_ids]
-        valid = self._terrain_ready()[env_ids] & _discrete_or_stairs_mask(family_ids)
+        valid = self._terrain_ready()[env_ids]
+        if self.support_cfg.disable_slope_family:
+            valid = valid & (family_ids != self.support_cfg.slope_family_id)
         env_ids = env_ids[valid]
         foot_ids = foot_ids[valid]
         if env_ids.numel() == 0:
@@ -330,51 +336,66 @@ class FootholdImaginationManager:
         stairs_weight_min: float = 0.0,
         stairs_weight_max: float = 1.0,
     ) -> torch.Tensor:
-        """Return unsupported-sole penalty for imagined swing footholds only.
-
-        Stance contact clearance is left to ``feet_at_plane``. Swing evaluates every
-        reachable cell, selects the support-quality Top-K, and scores their raw
-        probability-weighted deficiency plus an unselected-mass penalty. Per-foot
-        terms are roughly in ``[0, 1]``; weight them negative in cfg. Slope families
-        contribute 0 when ``disable_slope_family`` is set.
-        """
+        """SSR foothold reward from stance support and imagined swing support."""
         self._ensure_scene_handles()
         self._finalize_contacts()
-        penalty = torch.zeros(self.num_envs, device=self.device)
+        reward = torch.zeros(self.num_envs, device=self.device)
         if (
             not self._prepared
             or self.trainer is None
+            or self._latest_mu_b is None
+            or self._latest_sigma is None
             or not self.trainer.reward_enabled
         ):
-            return penalty
+            return reward
 
         terrain_ready = self._terrain_ready()
         if not terrain_ready.any():
-            return penalty
+            return reward
 
         family_ids = get_terrain_family_ids(self.env)
         contact = (
             self._contact_sensor.data.current_contact_time[:, self._contact_body_ids]
             > 0.0
         )
-        non_slope = terrain_ready & _discrete_or_stairs_mask(family_ids)
+        slope = torch.zeros_like(terrain_ready)
         if self.support_cfg.disable_slope_family:
-            non_slope = non_slope & (
-                family_ids != self.support_cfg.slope_family_id
+            slope = family_ids == self.support_cfg.slope_family_id
+        eligible_env = terrain_ready & ~slope & self._prediction_valid
+        eligible = eligible_env.unsqueeze(-1).expand(-1, 2)
+        rho_tilde = torch.zeros(self.num_envs, 2, device=self.device)
+
+        stance_pairs = (contact & eligible).nonzero(as_tuple=False)
+        if stance_pairs.numel() > 0:
+            env_ids = stance_pairs[:, 0]
+            foot_ids = stance_pairs[:, 1]
+            foot_pos_w = self._robot.data.body_pos_w[:, self._foot_body_ids]
+            stance_deficiency = self._support_evaluator.contact_unsupported_penalty(
+                foot_pos_w[env_ids, foot_ids],
+                self._latest_foot_yaw[env_ids, foot_ids],
+                foot_ids,
+                point_weights=None,
+            ).clamp(0.0, 1.0)
+            rho_tilde[env_ids, foot_ids] = stance_deficiency
+            self._guidance_stance_deficiency_stats[0] += (
+                stance_deficiency.double().sum()
             )
-        eligible = non_slope.unsqueeze(-1).expand(-1, 2)
+            self._guidance_stance_deficiency_stats[1] += float(
+                stance_deficiency.numel()
+            )
 
         swing_pairs = ((~contact) & eligible).nonzero(as_tuple=False)
         if swing_pairs.numel() > 0:
             env_ids = swing_pairs[:, 0]
             foot_ids = swing_pairs[:, 1]
-            imagined_pen = self._support_evaluator.support_deficiency(
-                self._latest_probabilities,
-                self.trainer.grid.reachable_mask,
-                self.trainer.grid.points,
-                self._latest_residuals,
-                self.cfg.grid.reward_quality_top_k,
-                self.cfg.grid.reward_quality_eval_chunk_size,
+            means = self._latest_mu_b[env_ids, foot_ids]
+            sigmas = self._latest_sigma[env_ids, foot_ids]
+            candidate_xy, candidate_weights = self.trainer.grid.expectation_points(
+                means, sigmas
+            )
+            swing_deficiency = self._support_evaluator.expected_support_deficiency(
+                candidate_xy,
+                candidate_weights,
                 self._latest_base_frame,
                 self._latest_foot_yaw,
                 env_ids,
@@ -383,13 +404,26 @@ class FootholdImaginationManager:
                 enable_terrain_foot_weights=enable_terrain_foot_weights,
                 stairs_weight_min=stairs_weight_min,
                 stairs_weight_max=stairs_weight_max,
-                unselected_mass_penalty=(
-                    self.cfg.grid.reward_unselected_mass_penalty
-                ),
+                eval_chunk_size=self.cfg.grid.expectation_eval_chunk_size,
             )
-            penalty.index_add_(0, env_ids, imagined_pen)
+            rho_tilde[env_ids, foot_ids] = swing_deficiency
+            self._guidance_swing_deficiency_stats[0] += (
+                swing_deficiency.double().sum()
+            )
+            self._guidance_swing_deficiency_stats[1] += float(
+                swing_deficiency.numel()
+            )
 
-        return penalty
+        summed_deficiency = rho_tilde.sum(dim=-1)
+        reward[eligible_env] = torch.exp(
+            -summed_deficiency[eligible_env].square() / self.support_cfg.reward_sigma
+        )
+        # SSR defines slope deficiency as zero, hence r_f=1.
+        reward[terrain_ready & slope & self._prediction_valid] = 1.0
+        active_reward = reward[terrain_ready & self._prediction_valid]
+        self._guidance_reward_stats[0] += active_reward.double().sum()
+        self._guidance_reward_stats[1] += float(active_reward.numel())
+        return torch.nan_to_num(reward, nan=0.0, posinf=0.0, neginf=0.0)
 
     def compute_edge_penetration(
         self,
@@ -423,7 +457,7 @@ class FootholdImaginationManager:
             self._contact_sensor.data.current_contact_time[:, self._contact_body_ids]
             > 0.0
         )
-        eligible = terrain_ready & _discrete_or_stairs_mask(family_ids)
+        eligible = terrain_ready & self._prediction_valid
         if self.support_cfg.disable_slope_family:
             eligible = eligible & (
                 family_ids != self.support_cfg.slope_family_id
@@ -452,15 +486,13 @@ class FootholdImaginationManager:
         if not virtual_obstacles:
             return penalty
 
+        if self._latest_mu_b is None:
+            return penalty
+
         env_ids = swing_pairs[:, 0]
         foot_ids = swing_pairs[:, 1]
         imagined_pen = self._support_evaluator.edge_penetration(
-            self._latest_probabilities,
-            self.trainer.grid.reachable_mask,
-            self.trainer.grid.points,
-            self._latest_residuals,
-            self.cfg.grid.reward_quality_top_k,
-            self.cfg.grid.reward_quality_eval_chunk_size,
+            self._latest_mu_b,
             self._latest_base_frame,
             self._latest_foot_yaw,
             env_ids,
@@ -482,10 +514,29 @@ class FootholdImaginationManager:
     def reset(self, env_ids: torch.Tensor) -> None:
         if env_ids.numel() > 0:
             self._pending_counts[env_ids] = 0
+            self._prediction_valid[env_ids] = False
+            for latest in (
+                self._latest_mu_b,
+                self._latest_sigma,
+                self._latest_base_frame,
+                self._latest_foot_yaw,
+            ):
+                if latest is not None:
+                    latest[env_ids] = 0
 
     def update_predictor(self) -> dict[str, float]:
         """Optimize the predictor and aggregate rollout metrics across all ranks."""
         metrics = dict(self._last_metrics)
+        for retired in (
+            "Foothold/Accuracy/top1_acc",
+            "Foothold/Guidance/expected_support_topk",
+            "Foothold/Guidance/forward_window_fallback_ratio",
+            "Foothold/Guidance/selected_mass",
+            "Foothold/Guidance/mean_deficiency_topk",
+            "Foothold/Guidance/point_deficiency",
+        ):
+            metrics.pop(retired, None)
+
         if self.trainer is not None:
             metrics.update(self.trainer.update())
 
@@ -497,7 +548,15 @@ class FootholdImaginationManager:
             dtype=torch.float64,
             device=self.device,
         )
-        rollout_stats = torch.cat((rollout_stats, self._contact_support_stats))
+        rollout_stats = torch.cat(
+            (
+                rollout_stats,
+                self._contact_support_stats,
+                self._guidance_stance_deficiency_stats,
+                self._guidance_swing_deficiency_stats,
+                self._guidance_reward_stats,
+            )
+        )
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.all_reduce(
                 rollout_stats, op=torch.distributed.ReduceOp.SUM
@@ -507,6 +566,12 @@ class FootholdImaginationManager:
             environment_count,
             contact_support_sum,
             contact_count,
+            stance_deficiency_sum,
+            stance_deficiency_count,
+            swing_deficiency_sum,
+            swing_deficiency_count,
+            guidance_reward_sum,
+            guidance_reward_count,
         ) = rollout_stats.tolist()
 
         mean_terrain_level = terrain_level_sum / environment_count
@@ -518,7 +583,27 @@ class FootholdImaginationManager:
         if contact_count > 0.0:
             metrics[contact_metric_name] = contact_support_sum / contact_count
 
+        stance_metric_name = "Foothold/Guidance/stance_deficiency"
+        metrics.pop(stance_metric_name, None)
+        if stance_deficiency_count > 0.0:
+            metrics[stance_metric_name] = (
+                stance_deficiency_sum / stance_deficiency_count
+            )
+
+        swing_metric_name = "Foothold/Guidance/swing_expected_deficiency"
+        metrics.pop(swing_metric_name, None)
+        if swing_deficiency_count > 0.0:
+            metrics[swing_metric_name] = swing_deficiency_sum / swing_deficiency_count
+
+        reward_metric_name = "Foothold/Guidance/reward"
+        metrics.pop(reward_metric_name, None)
+        if guidance_reward_count > 0.0:
+            metrics[reward_metric_name] = guidance_reward_sum / guidance_reward_count
+
         self._contact_support_stats.zero_()
+        self._guidance_stance_deficiency_stats.zero_()
+        self._guidance_swing_deficiency_stats.zero_()
+        self._guidance_reward_stats.zero_()
         self._last_metrics = metrics
         return metrics
 
@@ -535,6 +620,8 @@ class FootholdImaginationManager:
         # Pre-refactor checkpoints stored model state directly in this mapping.
         trainer_state = state.get("trainer", state)
         self.trainer.load_state_dict(trainer_state, load_optimizer=load_optimizer)
+        if bool(getattr(self.cfg, "clear_train_buffer_on_resume", True)):
+            self.trainer.clear_train_buffer()
 
 
 def imagined_foothold_guidance(
@@ -543,14 +630,7 @@ def imagined_foothold_guidance(
     stairs_weight_min: float = 0.0,
     stairs_weight_max: float = 1.0,
 ) -> torch.Tensor:
-    """Penalize unsupported sole mass at imagined swing footholds.
-
-    Stance contact clearance is handled by ``feet_at_plane``. Swing evaluates all
-    reachable cells, selects the support-quality Top-K, and scores the raw
-    probability-weighted unsupported fraction plus an unselected-mass penalty.
-    Terrain-dependent toe/heel/mid weights match ``volume_points_penetration_feet``.
-    Returns a non-negative term; use a negative reward weight.
-    """
+    """Return the positive SSR stance/swing foothold-support reward."""
     manager = getattr(env, "foothold_guidance", None)
     if manager is None:
         return torch.zeros(env.num_envs, device=env.device)

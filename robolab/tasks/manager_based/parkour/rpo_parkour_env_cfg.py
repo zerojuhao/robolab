@@ -99,12 +99,15 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
                 preserve_order=True,
             )
         }
-        self.rewards.rewards.rp1_hip_yaw_inward_sym_penalty = None
-        self.rewards.rewards.feet_close_xy_gauss.params["threshold"] = 0.05
-        self.rewards.rewards.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_arm_.*_joint", ".*_elbow.*_joint", "torso_joint"])
-        self.rewards.rewards.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="torso_link")
-        self.rewards.rewards.pelvis_ang_vel_xy_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="torso_link")
-        self.rewards.rewards.pelvis_ang_vel_xy_l2.weight = -0.01
+        # RPO uses the legacy single-value PPO path without foothold imagination.
+        self.rewards.foothold = None
+        self.observations.foothold_predictor = None
+        self.rewards.locomotion.rp1_hip_yaw_inward_sym_penalty = None
+        self.rewards.locomotion.feet_close_xy_gauss.params["threshold"] = 0.05
+        self.rewards.locomotion.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_arm_.*_joint", ".*_elbow.*_joint", "torso_joint"])
+        self.rewards.locomotion.pelvis_orientation_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="torso_link")
+        self.rewards.locomotion.pelvis_ang_vel_xy_l2.params["asset_cfg"] = SceneEntityCfg("robot", body_names="torso_link")
+        self.rewards.locomotion.pelvis_ang_vel_xy_l2.weight = -0.01
 
         self.terminations.base_contact.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_names=["torso_link"])
         
@@ -117,7 +120,7 @@ class ShoeConfigMixin:
         self.scene.robot = RPO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.feet_volume_points.points_generator.z_min = -0.063
         self.scene.feet_volume_points.points_generator.z_max = -0.023
-        self.rewards.rewards.feet_at_plane.params["height_offset"] = 0.058
+        self.rewards.locomotion.feet_at_plane.params["height_offset"] = 0.058
 
 
 @configclass

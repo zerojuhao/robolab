@@ -16,7 +16,6 @@ from .terrain_family import (
     STAIRS_DOWN_FAMILY_ID,
     STAIRS_UP_FAMILY_ID,
     get_terrain_family_ids,
-    soft_absolute_clearance_unsupported,
     terrain_foot_point_weights,
 )
 
@@ -300,70 +299,47 @@ def feet_at_plane(
     left_height_scanner_cfg: SceneEntityCfg,
     right_height_scanner_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    height_offset: float = 0.03,
-    height_tolerance: float = 0.03,
-    transition_width: float = 0.005,
-    enable_terrain_foot_weights: bool = True,
-    stairs_weight_min: float = 0.0,
-    stairs_weight_max: float = 1.0,
+    height_offset=0.035,
 ) -> torch.Tensor:
-    """Penalize contacting feet that remain above their local terrain support.
-
-    Uses soft absolute clearance (same kernel as swing ``imagined_foothold_guidance``)
-    with optional terrain-dependent toe/heel/mid sole-point weights. Returns the sum
-    over contacting feet of a weighted-mean unsupported fraction in roughly ``[0, 2]``.
-    """
+    """Reward feet being at certain height above the ground plane."""
+    # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
     net_contact_forces = contact_sensor.data.net_forces_w_history
-    is_contact = (
-        torch.max(
-            torch.norm(
-                net_contact_forces[:, :, contact_sensor_cfg.body_ids], dim=-1
-            ),
-            dim=1,
-        ).values
-        > 1.0
-    )
-
-    left_scanner = env.scene.sensors[left_height_scanner_cfg.name]
-    right_scanner = env.scene.sensors[right_height_scanner_cfg.name]
-    terrain_heights = torch.stack(
-        (
-            left_scanner.data.ray_hits_w[..., 2],
-            right_scanner.data.ray_hits_w[..., 2],
-        ),
+    is_contact = torch.max(
+        torch.norm(net_contact_forces[:, :, contact_sensor_cfg.body_ids], dim=-1),
         dim=1,
-    )  # (N, 2, P)
-    foot_heights = asset.data.body_pos_w[:, asset_cfg.body_ids, 2].unsqueeze(-1)
-
-    point_weights = None
-    if enable_terrain_foot_weights:
-        family_ids = get_terrain_family_ids(env)
-        # Ray starts are in the sensor/body frame (offset already applied); x = heel→toe.
-        left_x = left_scanner.ray_starts[0, :, 0]
-        right_x = right_scanner.ray_starts[0, :, 0]
-        point_weights = torch.stack(
-            (
-                terrain_foot_point_weights(
-                    left_x, family_ids, stairs_weight_min, stairs_weight_max
-                ),
-                terrain_foot_point_weights(
-                    right_x, family_ids, stairs_weight_min, stairs_weight_max
-                ),
-            ),
-            dim=1,
-        )  # (N, 2, P)
-
-    per_foot = soft_absolute_clearance_unsupported(
-        foot_heights,
-        terrain_heights,
-        height_offset=height_offset,
-        height_tolerance=height_tolerance,
-        transition_width=transition_width,
-        point_weights=point_weights,
+    )[0] > 1
+    left_sensor = env.scene[left_height_scanner_cfg.name]
+    left_sensor_data = left_sensor.data.ray_hits_w[..., 2]
+    left_sensor_data = torch.where(
+        torch.isinf(left_sensor_data), 0.0, left_sensor_data
     )
-    return torch.sum(per_foot * is_contact, dim=-1)
+    right_sensor = env.scene[right_height_scanner_cfg.name]
+    right_sensor_data = right_sensor.data.ray_hits_w[..., 2]
+    right_sensor_data = torch.where(
+        torch.isinf(right_sensor_data), 0.0, right_sensor_data
+    )
+    left_height = asset.data.body_pos_w[:, asset_cfg.body_ids[0], 2]
+    right_height = asset.data.body_pos_w[:, asset_cfg.body_ids[1], 2]
+
+    left_reward = (
+        torch.clamp(
+            left_height.unsqueeze(-1) - left_sensor_data - height_offset,
+            min=0.0,
+            max=0.3,
+        )
+        * is_contact[:, 0:1]
+    )
+    right_reward = (
+        torch.clamp(
+            right_height.unsqueeze(-1) - right_sensor_data - height_offset,
+            min=0.0,
+            max=0.3,
+        )
+        * is_contact[:, 1:2]
+    )
+    return torch.sum(left_reward, dim=-1) + torch.sum(right_reward, dim=-1)
 
 
 def link_orientation(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
