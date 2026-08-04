@@ -47,6 +47,7 @@ class RslRlMultiRewardPpoAmpAlgorithmCfg(RslRlPpoAmpAlgorithmCfg):
     class_name: str = "MultiRewardPPOAMP"
     num_reward_heads: int = 3
     advantage_weights: list[float] = [1.0, 0.25, 0.2]
+    reward_head_names: list[str] = ["locomotion", "foothold", "style"]
 
 
 @configclass
