@@ -1,3 +1,3 @@
-from .amp_observations import * 
+from .amp_observations import *
 from .exteroception import *
-from .foothold_observations import *
+from .privileged_observations import *

@@ -1,4 +1,4 @@
-"""Foothold predictor optimization and loss-based reward gating."""
+"""Foothold predictor optimization and RMSE reward gating."""
 
 from __future__ import annotations
 
@@ -7,10 +7,24 @@ import copy
 import torch
 import torch.optim as optim
 
+from isaaclab.utils.math import wrap_to_pi
+
 from .config import FootholdPredictorCfg
 from .grid import FootholdGaussianGeometry
 from .model import FootholdPredictor
 from .replay_buffer import FootholdReplayBuffer
+
+
+def empty_predictor_logs(reward_enabled: bool = False) -> dict[str, float]:
+    """Zeroed foothold logs used before the trainer exists or replay is ready."""
+    return {
+        "Foothold/Loss/nll": 0.0,
+        "Foothold/Accuracy/xy_rmse_m": 0.0,
+        "Foothold/Accuracy/yaw_rmse_rad": 0.0,
+        "Foothold/Distribution/sigma_mean_m": 0.0,
+        "Foothold/Distribution/yaw_sigma_mean_rad": 0.0,
+        "Foothold/Guidance/reward_enabled": float(reward_enabled),
+    }
 
 
 class FootholdPredictorTrainer:
@@ -24,7 +38,9 @@ class FootholdPredictorTrainer:
         self.cfg = cfg
         self.device = device
         self.grid = FootholdGaussianGeometry(cfg.grid, device)
-        self.model = FootholdPredictor(input_dim, cfg.hidden_dims).to(device)
+        if not cfg.hidden_dims:
+            raise ValueError("FootholdPredictorCfg.hidden_dims is required.")
+        self.model = FootholdPredictor(input_dim, list(cfg.hidden_dims)).to(device)
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             for parameter in self.model.parameters():
                 torch.distributed.broadcast(parameter.data, src=0)
@@ -51,16 +67,18 @@ class FootholdPredictorTrainer:
         self.train_buffer.append(inputs, targets, foot_ids)
 
     def clear_train_buffer(self) -> None:
-        """Discard replay samples without touching model weights."""
         self.train_buffer.clear()
 
     @torch.no_grad()
     def predict(
         self, predictor_input: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return Gaussian means ``[N,2,2]`` and sigmas ``[N,2]``."""
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return mean XY ``[N,2,2]``, mean yaw ``[N,2]``, and XY sigma ``[N,2]``."""
         self.ema_model.eval()
-        return self.grid.decode_distribution(self.ema_model(predictor_input))
+        mean_xy, mean_yaw, sigma_xy, _sigma_yaw = self.grid.decode_distribution(
+            self.ema_model(predictor_input)
+        )
+        return mean_xy, mean_yaw, sigma_xy
 
     def _losses(
         self,
@@ -69,34 +87,43 @@ class FootholdPredictorTrainer:
         target: torch.Tensor,
         foot_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        raw_distribution = model(predictor_input)
-        pred_xy, pred_sigma = self.grid.decode_distribution(raw_distribution)
+        pred_xy, pred_yaw, pred_sigma_xy, pred_sigma_yaw = self.grid.decode_distribution(
+            model(predictor_input)
+        )
         batch_ids = torch.arange(predictor_input.shape[0], device=self.device)
-        pred_foot = pred_xy[batch_ids, foot_ids]
-        sigma_foot = pred_sigma[batch_ids, foot_ids]
+        xy_foot = pred_xy[batch_ids, foot_ids]
+        yaw_foot = pred_yaw[batch_ids, foot_ids]
+        sigma_xy = pred_sigma_xy[batch_ids, foot_ids]
+        sigma_yaw = pred_sigma_yaw[batch_ids, foot_ids]
 
-        squared_error = (pred_foot - target).square().sum(dim=-1)
+        xy_squared_error = (xy_foot - target[..., :2]).square().sum(dim=-1)
+        yaw_squared_error = wrap_to_pi(yaw_foot - target[..., 2]).square()
         per_sample = (
-            squared_error / (2.0 * sigma_foot.square())
-            + 2.0 * torch.log(sigma_foot)
+            xy_squared_error / (2.0 * sigma_xy.square())
+            + 2.0 * torch.log(sigma_xy)
+            + yaw_squared_error / (2.0 * sigma_yaw.square())
+            + torch.log(sigma_yaw)
         )
         finite = torch.isfinite(target).all(dim=-1)
-        nll = per_sample[finite].mean() if finite.any() else pred_foot.sum() * 0.0
+        nll = per_sample[finite].mean() if finite.any() else xy_foot.sum() * 0.0
 
-        prediction_loss = float(self.cfg.nll_loss_coef) * nll
-        valid_squared_error = squared_error[finite]
-        valid_sigma = sigma_foot[finite]
-        xy_rmse = valid_squared_error.mean().sqrt()
-        normalized_squared_error = valid_squared_error / valid_sigma.square()
+        valid_xy = xy_squared_error[finite]
+        valid_yaw = yaw_squared_error[finite]
+        valid_sigma_xy = sigma_xy[finite]
+        valid_sigma_yaw = sigma_yaw[finite]
+        zero = xy_foot.new_zeros(())
         metrics = {
             "nll": nll.detach(),
-            "xy_rmse": xy_rmse.detach(),
-            "sigma_mean": valid_sigma.mean().detach(),
-            "calibration_error": (
-                normalized_squared_error.mean() - 2.0
-            ).abs().detach(),
+            "xy_rmse": (valid_xy.mean().sqrt() if valid_xy.numel() else zero).detach(),
+            "yaw_rmse": (valid_yaw.mean().sqrt() if valid_yaw.numel() else zero).detach(),
+            "sigma_mean": (
+                valid_sigma_xy.mean() if valid_sigma_xy.numel() else zero
+            ).detach(),
+            "yaw_sigma_mean": (
+                valid_sigma_yaw.mean() if valid_sigma_yaw.numel() else zero
+            ).detach(),
         }
-        return prediction_loss, metrics
+        return float(self.cfg.nll_loss_coef) * nll, metrics
 
     @torch.no_grad()
     def _update_ema_model(self) -> None:
@@ -107,6 +134,9 @@ class FootholdPredictorTrainer:
                 parameter, alpha=1.0 - self.cfg.ema_decay
             )
 
+    def idle_metrics(self) -> dict[str, float]:
+        return empty_predictor_logs(self.reward_enabled)
+
     def update(self) -> dict[str, float]:
         locally_ready = self.train_buffer.size >= self.cfg.min_train_samples
         globally_ready = locally_ready
@@ -116,10 +146,9 @@ class FootholdPredictorTrainer:
             globally_ready = bool(ready.item())
 
         if not globally_ready:
-            return {}
+            return self.idle_metrics()
 
         self.model.train()
-        optimization_losses: list[float] = []
         for _ in range(self.cfg.updates_per_iteration):
             inputs, targets, foot_ids = self.train_buffer.sample(self.cfg.batch_size)
             loss, _ = self._losses(self.model, inputs, targets, foot_ids)
@@ -136,24 +165,20 @@ class FootholdPredictorTrainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
             self._update_ema_model()
-            optimization_losses.append(float(loss.detach().item()))
 
-        prediction_loss = sum(optimization_losses) / len(optimization_losses)
         with torch.no_grad():
             inputs, targets, foot_ids = self.train_buffer.sample(self.cfg.batch_size)
             _, metrics = self._losses(self.ema_model, inputs, targets, foot_ids)
-            metric_values = {
-                key: float(value.item()) for key, value in metrics.items()
-            }
+            metric_values = {key: float(value.item()) for key, value in metrics.items()}
 
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             packed = torch.tensor(
                 (
-                    prediction_loss,
                     metric_values["nll"],
                     metric_values["xy_rmse"],
+                    metric_values["yaw_rmse"],
                     metric_values["sigma_mean"],
-                    metric_values["calibration_error"],
+                    metric_values["yaw_sigma_mean"],
                 ),
                 dtype=torch.float64,
                 device=self.device,
@@ -161,29 +186,27 @@ class FootholdPredictorTrainer:
             torch.distributed.all_reduce(packed, op=torch.distributed.ReduceOp.SUM)
             packed /= torch.distributed.get_world_size()
             values = packed.tolist()
-            prediction_loss = values[0]
             metric_values = {
-                "nll": values[1],
-                "xy_rmse": values[2],
+                "nll": values[0],
+                "xy_rmse": values[1],
+                "yaw_rmse": values[2],
                 "sigma_mean": values[3],
-                "calibration_error": values[4],
+                "yaw_sigma_mean": values[4],
             }
 
-        xy_rmse = metric_values["xy_rmse"]
         if (
             not self.reward_enabled
-            and xy_rmse < self.cfg.enable_xy_rmse_threshold
+            and metric_values["xy_rmse"] < self.cfg.enable_xy_rmse_threshold
+            and metric_values["yaw_rmse"] < self.cfg.enable_yaw_rmse_threshold
         ):
             self.reward_enabled = True
 
         return {
-            "Foothold/Loss/prediction_loss": prediction_loss,
             "Foothold/Loss/nll": metric_values["nll"],
             "Foothold/Accuracy/xy_rmse_m": metric_values["xy_rmse"],
+            "Foothold/Accuracy/yaw_rmse_rad": metric_values["yaw_rmse"],
             "Foothold/Distribution/sigma_mean_m": metric_values["sigma_mean"],
-            "Foothold/Distribution/calibration_error": metric_values[
-                "calibration_error"
-            ],
+            "Foothold/Distribution/yaw_sigma_mean_rad": metric_values["yaw_sigma_mean"],
             "Foothold/Guidance/reward_enabled": float(self.reward_enabled),
         }
 
@@ -201,11 +224,16 @@ class FootholdPredictorTrainer:
         if state.get("grid_signature") != self.grid.signature:
             raise RuntimeError(
                 "Foothold predictor checkpoint uses a different output distribution; "
-                "the Gaussian predictor must be trained from scratch."
+                "train the Gaussian predictor from scratch."
             )
         if int(state["input_dim"]) != self.input_dim:
             raise RuntimeError(
                 f"Foothold predictor input changed from {state['input_dim']} to {self.input_dim}."
+            )
+        if bool(state.get("shared", False)):
+            raise RuntimeError(
+                "Checkpoint used a shared critic foothold head; train the standalone "
+                "predictor from scratch."
             )
         self.model.load_state_dict(state["model"])
         self.ema_model.load_state_dict(state["ema_model"])

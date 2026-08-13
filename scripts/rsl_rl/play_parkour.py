@@ -147,36 +147,40 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     export_model_dir = os.path.join(log_dir, "exported")
     # export policy to onnx (separate encoder + actor graphs when policy implements export_as_onnx)
-    if agent_cfg.load_run is not None and args_cli.exportonnx:
+    if args_cli.exportonnx:
         assert env.unwrapped.num_envs == 1, "Exporting to ONNX is only supported for single environment."
         if not hasattr(policy_nn, "export_as_onnx"):
             raise AttributeError(
-                "export_as_onnx is missing on the policy module; use EncoderActorCritic / EncoderMoEActorCritic "
-                "for parkour ONNX export."
+                "export_as_onnx is missing on the policy module; use EncoderMoEActorCritic / "
+                "EncoderMoEActorMultiCritic for parkour/SSR ONNX export."
             )
         os.makedirs(export_model_dir, exist_ok=True)
         obs = env.get_observations()
         policy_nn.export_as_onnx(obs, export_model_dir)
+        print(f"[INFO] ONNX exported to: {export_model_dir}")
     else:
         obs = env.get_observations()
 
     policy = torch_policy
     dt = env.unwrapped.step_dt
     timestep = 0
+    # Short smoke play after export (or forever if neither video nor export).
+    max_play_steps = args_cli.video_length if args_cli.video else (50 if args_cli.exportonnx else None)
     while simulation_app.is_running():
         start_time = time.time()
         with torch.inference_mode():
             actions = policy(obs)
-            if isinstance(runner, AMPRunner):
+            if isinstance(runner, AMPRunner) and hasattr(
+                runner, "prepare_foothold_prediction_step"
+            ):
                 runner.prepare_foothold_prediction_step(
                     obs, actions, enable_inference_guidance=True
                 )
             obs, _, dones, _ = env.step(actions)
             policy_nn.reset(dones)
-        if args_cli.video:
-            timestep += 1
-            if timestep == args_cli.video_length:
-                break
+        timestep += 1
+        if max_play_steps is not None and timestep >= max_play_steps:
+            break
 
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:

@@ -19,6 +19,8 @@ STAIRS_DOWN_FAMILY_ID = 2
 STAIRS_UP_FAMILY_ID = 3
 SLOPE_FAMILY_ID = 4
 STAIRS_FAMILY_IDS = (STAIRS_DOWN_FAMILY_ID, STAIRS_UP_FAMILY_ID)
+# Foothold train / predict / reward / logs are stairs-only (not rough, gaps, or slope).
+FOOTHOLD_GUIDANCE_FAMILY_IDS = STAIRS_FAMILY_IDS
 NUM_TERRAIN_FAMILIES = 5
 
 
@@ -40,11 +42,11 @@ def terrain_foot_point_weights(
     w_toe_heavy = stairs_weight_min + weight_span * x_frac
     w_heel_heavy = stairs_weight_max - weight_span * x_frac
     w_mid_heavy = stairs_weight_min + weight_span * (
-        1.0 - torch.abs(2.0 * x_frac - 1.0)
+        1.0 - torch.abs(x_frac - 1.0)
     )
-    w_toe_heavy = 2.0 * w_toe_heavy.square()
-    w_heel_heavy = 2.0 * w_heel_heavy.square()
-    w_mid_heavy = 2.0 * w_mid_heavy.square()
+    w_toe_heavy = w_toe_heavy.square()
+    w_heel_heavy = w_heel_heavy.square()
+    w_mid_heavy = w_mid_heavy.square()
 
     env_w = w_mid_heavy.unsqueeze(0).expand(family_ids.shape[0], -1).clone()
     mask_up = family_ids == STAIRS_UP_FAMILY_ID

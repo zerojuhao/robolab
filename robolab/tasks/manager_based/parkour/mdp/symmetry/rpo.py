@@ -198,8 +198,6 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
         obs["foot_lin_vel"] = _swap_pair_and_flip_y(obs["foot_lin_vel"], cfg.foot_lin_vel.history_length)
     if "foot_contact" in obs:
         obs["foot_contact"] = _swap_pair_scalar(obs["foot_contact"], cfg.foot_contact.history_length)
-    if "hand_pos_b" in obs:
-        obs["hand_pos_b"] = _swap_pair_and_flip_y(obs["hand_pos_b"], cfg.hand_pos_b.history_length)
     if "foot_pos_b" in obs:
         obs["foot_pos_b"] = _swap_pair_and_flip_y(obs["foot_pos_b"], cfg.foot_pos_b.history_length)
     if "height_scan" in obs:
@@ -207,6 +205,15 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
             env, "height_scanner", cfg.height_scan.history_length
         )
         obs["height_scan"] = _transform_height_scan_left_right(obs["height_scan"], hist, ny, nx)
+    if "estimation_height_scan" in obs:
+        hist, ny, nx = _grid_scan_left_right_dims(
+            env,
+            "estimation_height_scanner",
+            cfg.estimation_height_scan.history_length,
+        )
+        obs["estimation_height_scan"] = _transform_height_scan_left_right(
+            obs["estimation_height_scan"], hist, ny, nx
+        )
     if "left_foot_height_map" in obs and "right_foot_height_map" in obs:
         hist, ny, nx = _grid_scan_left_right_dims(
             env, "left_height_scanner", cfg.left_foot_height_map.history_length

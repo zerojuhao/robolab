@@ -43,27 +43,21 @@ gym.register(
 )
 
 gym.register(
-    id="RP1-Parkour-SSR",
-    entry_point="robolab.tasks.manager_based.parkour.parkour_env:ParkourEnv",
+    id="RP1-SSR",
+    entry_point="robolab.tasks.manager_based.parkour.ssr_env:SSREnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.rp1_parkour_env_cfg:RP1ParkourSSREnvCfg",
-        "rsl_rl_cfg_entry_point": (
-            f"{agents.__name__}.rp1_parkour_ssr_agent_cfg:RP1ParkourSSRAmpRunnerCfg"
-        ),
+        "env_cfg_entry_point": f"{__name__}.rp1_ssr_env_cfg:RP1SSREnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rp1_ssr_agent_cfg:RP1SSRAmpRunnerCfg",
     },
 )
 
 gym.register(
-    id="RP1-Parkour-SSR-Play",
-    entry_point="robolab.tasks.manager_based.parkour.parkour_env:ParkourEnv",
+    id="RP1-SSR-Play",
+    entry_point="robolab.tasks.manager_based.parkour.ssr_env:SSREnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": (
-            f"{__name__}.rp1_parkour_env_cfg:RP1ParkourSSREnvCfg_PLAY"
-        ),
-        "rsl_rl_cfg_entry_point": (
-            f"{agents.__name__}.rp1_parkour_ssr_agent_cfg:RP1ParkourSSRAmpRunnerCfg"
-        ),
+        "env_cfg_entry_point": f"{__name__}.rp1_ssr_env_cfg:RP1SSREnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rp1_ssr_agent_cfg:RP1SSRAmpRunnerCfg",
     },
 )

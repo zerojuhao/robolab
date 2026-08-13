@@ -9,8 +9,6 @@ from robolab.assets.robots.roboparty import PR1_LINKS, RP1_24DOF_CFG
 from robolab.sensors import Grid3dPointsGeneratorCfg, get_link_prim_targets
 from robolab.tasks.manager_based.parkour.parkour_env_cfg import (
     ROUGH_TERRAINS_CFG,
-    FootholdRewardsCfg,
-    ObservationsCfg,
     ParkourEnvCfg,
 )
 
@@ -24,9 +22,8 @@ KEY_BODY_NAMES = [
     "right_wrist_link",
 ]
 
-RP1_NOMINAL_BASE_HEIGHT = RP1_24DOF_CFG.init_state.pos[2]
 RP1_24DOF_CFG.init_state.pos = (0.0, 0.0, 0.85)
-AMP_NUM_STEPS = 3
+AMP_NUM_STEPS = 8
 
 # Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
@@ -46,9 +43,10 @@ FOOT_HEIGHT_SCAN_CENTER = (
     0.5 * (FEET_VOLUME_POINTS_GRID.x_min + FEET_VOLUME_POINTS_GRID.x_max),
     0.5 * (FEET_VOLUME_POINTS_GRID.y_min + FEET_VOLUME_POINTS_GRID.y_max),
 )
+# Match ParkourEnvCfg foot height-map grid (slightly narrower in y than the shoe volume).
 FOOT_HEIGHT_SCAN_SIZE = (
     FEET_VOLUME_POINTS_GRID.x_max - FEET_VOLUME_POINTS_GRID.x_min,
-    FEET_VOLUME_POINTS_GRID.y_max - FEET_VOLUME_POINTS_GRID.y_min,
+    0.04,
 )
 
 KNEE_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
@@ -131,11 +129,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             )
         }
 
-        self.rewards.locomotion.rpo_thigh_yaw_inward_sym_penalty = None
-        # The legacy RP1 task remains a scalar AMP task. SSR-only observations,
-        # rewards, predictor training, and critics are registered separately.
-        self.observations.foothold_predictor = None
-        self.rewards.foothold = None
+        self.rewards.locomotion.rpo_thigh_yaw_deviation = None
 
         self.rewards.locomotion.feet_close_xy_gauss.params["threshold"] = 0.16
         self.rewards.locomotion.joint_deviation_upper_body.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_joint", "waist_.*_joint"])
@@ -168,6 +162,7 @@ class RP1ParkourEnvCfg_PLAY(RP1ParkourEnvCfg):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 1
             self.scene.terrain.terrain_generator.num_cols = 1
+            self.scene.terrain.terrain_generator.one_col_per_subterrain = False
         self.scene.terrain.debug_vis = True
         self.scene.feet_volume_points.debug_vis = True
         self.scene.knee_volume_points.debug_vis = True
@@ -177,34 +172,3 @@ class RP1ParkourEnvCfg_PLAY(RP1ParkourEnvCfg):
             "position_range": (0.0, 0.0),
             "velocity_range": (0.0, 0.0),
         }
-
-
-def _enable_ssr_foothold(cfg: RP1ParkourEnvCfg) -> None:
-    """Attach only SSR foothold observations and the foothold reward head."""
-    cfg.observations.foothold_predictor = ObservationsCfg.FootholdPredictorCfg()
-    cfg.observations.foothold_predictor.base_height_map.params[
-        "offset"
-    ] = RP1_NOMINAL_BASE_HEIGHT
-    wrist_cfg = SceneEntityCfg(
-        "robot",
-        body_names=["left_wrist_link", "right_wrist_link"],
-        preserve_order=True,
-    )
-    cfg.observations.foothold_predictor.hand_pos_b.params["asset_cfg"] = wrist_cfg
-    # Match RP1 end-effector links used by the critic privileged limb features.
-    cfg.observations.critic.hand_pos_b.params["asset_cfg"] = wrist_cfg
-    cfg.rewards.foothold = FootholdRewardsCfg()
-
-
-@configclass
-class RP1ParkourSSREnvCfg(RP1ParkourEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        _enable_ssr_foothold(self)
-
-
-@configclass
-class RP1ParkourSSREnvCfg_PLAY(RP1ParkourEnvCfg_PLAY):
-    def __post_init__(self):
-        super().__post_init__()
-        _enable_ssr_foothold(self)

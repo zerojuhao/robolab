@@ -16,48 +16,67 @@ from robolab.tasks.manager_based.parkour.mdp.symmetry import rp1
 class RslRlPpoEncoderMoEActorMultiCriticCfg:
     class_name: str = "EncoderMoEActorMultiCritic"
     init_noise_std: float = 1.0
-    num_moe_experts: int = 5
-    # SSR Table 8: Expert MLP [1024, 512, 128], Gate MLP hidden size 128.
-    moe_gate_hidden_dims: list[int] = [128]
-    actor_hidden_dims: list[int] = [256, 128, 64]
+    num_moe_experts: int = 1
+    moe_gate_hidden_dims: list[int] = []
+    actor_hidden_dims: list[int] = [512, 256, 128]
     critic_hidden_dims: list[int] = [512, 256, 128]
     actor_obs_normalization: bool = False
     critic_obs_normalization: bool = False
     activation: str = "elu"
     actor_encoder_obs_groups: list[str] = ["depth_image"]
     critic_encoder_obs_groups: list[str] = None
+    # Depth 8x18x32, memory-friendly: downsample early, avoid wide maps at full res.
+    # Spatial ≈ 18x32 → 9x16 → 4x8 → 4x8 before MLP → 256.
     encoder_cfg: dict = {
-        "channels": [4],
-        "kernel_sizes": [3],
-        "strides": [1],
+        "channels": [16, 32, 64],
+        "kernel_sizes": [3, 3, 3],
+        "strides": [2, 2, 1],
         "hidden_sizes": [256, 256],
-        "output_size": 128,
-        "paddings": [1],
+        "output_size": 256,
+        "paddings": [1, 1, 1],
         "nonlinearity": "ReLU",
         "use_maxpool": True,
         "last_activation": "ReLU",
     }
     encoder_onnx_stems: dict[str, str] = {"depth_image": "depth_encoder"}
     encoder_onnx_sequential_idx: int | None = None
-    actor_onnx_filename: str = "policy_parkour.onnx"
+    actor_onnx_filename: str = "policy_ssr.onnx"
+    # Actor features: [flat_proprio_history, v_hat, f_hat, h_hat, depth_latent].
+    enable_ssr_estimation: bool = True
+    proprio_history_length: int = 8
+    estimation_proprio_encoder_hidden_dims: list[int] = [512, 256]
+    estimation_proprio_latent_dim: int = 256
+    estimation_estimator_hidden_dims: list[int] = [512, 256] # velocity_estimator、foothold_estimator
+    estimation_decoder_hidden_dims: list[int] = [256, 128] # foot_height_decoder
+    estimation_actor_use_proprio_latent: bool = False
+    enable_actor_foothold: bool = True
+    enable_actor_foot_height: bool = True
+    estimation_foot_height_actor_dim: int = 16
+    # Wait for privileged predictor reward_enabled before SSR foothold aux / f_hat.
+    gate_foothold_estimation_on_predictor_ready: bool = True
+    aux_velocity_coef: float = 1.0
+    aux_foot_height_coef: float = 1.0
+    aux_foothold_coef: float = 2.0
 
 
 @configclass
 class RslRlMultiRewardPpoAmpAlgorithmCfg(RslRlPpoAmpAlgorithmCfg):
     class_name: str = "MultiRewardPPOAMP"
     num_reward_heads: int = 3
-    advantage_weights: list[float] = [1.0, 0.25, 0.2]
+    advantage_weights: list[float] = [1.0, 0.8, 0.2]
     reward_head_names: list[str] = ["locomotion", "foothold", "style"]
+    enable_aux_loss: bool = True
+    aux_loss_coef: float = 1.0
 
 
 @configclass
-class RP1ParkourSSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
+class RP1SSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     class_name = "AMPRunner"
     num_steps_per_env = 24
     max_iterations = 30000
     save_interval = 500
-    experiment_name = "rp1_parkour_ssr"
-    wandb_project = "rp1_parkour_ssr"
+    experiment_name = "rp1_ssr"
+    wandb_project = "rp1_ssr"
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -67,13 +86,15 @@ class RP1ParkourSSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
     policy = RslRlPpoEncoderMoEActorMultiCriticCfg()
     foothold_imagination: FootholdPredictorCfg = FootholdPredictorCfg(
         enabled=True,
-        hidden_dims=[256, 128],
+        hidden_dims=[512, 256, 128],
         learning_rate=5.0e-4,
         weight_decay=1.0e-5,
         ema_decay=0.99,
         grid=FootholdGridCfg(
             sigma_min=0.01,
             sigma_max=0.25,
+            yaw_sigma_min=0.05,
+            yaw_sigma_max=0.5,
             expectation_grid_size=5,
             expectation_std_range=2.0,
             expectation_eval_chunk_size=64,
@@ -81,13 +102,14 @@ class RP1ParkourSSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         nll_loss_coef=1.0,
         max_pending_steps=48,
         pending_sample_stride=1,
-        train_pending_tail_steps=12,
+        train_pending_tail_steps=24,
         train_buffer_capacity=100_000,
         batch_size=4096,
         updates_per_iteration=8,
         min_train_samples=25_000,
         curriculum_level_threshold=1.0,
         enable_xy_rmse_threshold=0.05,
+        enable_yaw_rmse_threshold=0.15,
         clear_train_buffer_on_resume=True,
     )
     algorithm = RslRlMultiRewardPpoAmpAlgorithmCfg(
@@ -111,10 +133,10 @@ class RP1ParkourSSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         ),
         amp_cfg=RslRlAmpCfg(
             disc_obs_buffer_size=100,
-            grad_penalty_scale=5.0,
-            disc_trunk_weight_decay=1.0e-5,
-            disc_linear_weight_decay=1.0e-3,
-            disc_learning_rate=1.0e-5,
+            grad_penalty_scale=10.0,
+            disc_trunk_weight_decay=1.0e-4,
+            disc_linear_weight_decay=1.0e-2,
+            disc_learning_rate=1.0e-4,
             disc_max_grad_norm=1.0,
             amp_discriminator=RslRlAmpCfg.AMPDiscriminatorCfg(
                 hidden_dims=[1024, 512],

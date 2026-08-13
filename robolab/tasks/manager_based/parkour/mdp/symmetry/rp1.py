@@ -58,17 +58,24 @@ def compute_symmetric_states(
     obs: TensorDict | None = None,
     actions: torch.Tensor | None = None,
 ):
-    """Augments observations and actions with left-right symmetry (batch x2)."""
+    """Augments observations and actions with left-right symmetry (batch x2).
+
+    Only ``policy`` / ``critic`` are repeated. AMP ``disc`` / ``disc_demo`` are
+    unused by the symmetry-augmented policy update and are omitted.
+    """
 
     if obs is not None:
         batch_size = obs.batch_size[0]
-        obs_aug = obs.repeat(2)
-
-        obs_aug["policy"][:batch_size] = obs["policy"][:]
-        obs_aug["policy"][batch_size : 2 * batch_size] = _transform_policy_obs_left_right(obs["policy"])
-
-        obs_aug["critic"][:batch_size] = obs["critic"][:]
-        obs_aug["critic"][batch_size : 2 * batch_size] = _transform_critic_obs_left_right(env, obs["critic"])
+        policy_mirrored = _transform_policy_obs_left_right(obs["policy"])
+        critic_mirrored = _transform_critic_obs_left_right(env, obs["critic"])
+        obs_aug = TensorDict(
+            {
+                "policy": torch.cat([obs["policy"], policy_mirrored], dim=0),
+                "critic": torch.cat([obs["critic"], critic_mirrored], dim=0),
+            },
+            batch_size=[batch_size * 2],
+            device=obs.device,
+        )
     else:
         obs_aug = None
 
@@ -160,8 +167,6 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
         obs["foot_lin_vel"] = _swap_pair_and_flip_y(obs["foot_lin_vel"], cfg.foot_lin_vel.history_length)
     if "foot_contact" in obs:
         obs["foot_contact"] = _swap_pair_scalar(obs["foot_contact"], cfg.foot_contact.history_length)
-    if "hand_pos_b" in obs:
-        obs["hand_pos_b"] = _swap_pair_and_flip_y(obs["hand_pos_b"], cfg.hand_pos_b.history_length)
     if "foot_pos_b" in obs:
         obs["foot_pos_b"] = _swap_pair_and_flip_y(obs["foot_pos_b"], cfg.foot_pos_b.history_length)
     if "height_scan" in obs:
@@ -169,6 +174,15 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
             env, "height_scanner", cfg.height_scan.history_length
         )
         obs["height_scan"] = _transform_height_scan_left_right(obs["height_scan"], hist, ny, nx)
+    if "estimation_height_scan" in obs:
+        hist, ny, nx = _grid_scan_left_right_dims(
+            env,
+            "estimation_height_scanner",
+            cfg.estimation_height_scan.history_length,
+        )
+        obs["estimation_height_scan"] = _transform_height_scan_left_right(
+            obs["estimation_height_scan"], hist, ny, nx
+        )
     if "left_foot_height_map" in obs and "right_foot_height_map" in obs:
         hist, ny, nx = _grid_scan_left_right_dims(
             env, "left_height_scanner", cfg.left_foot_height_map.history_length

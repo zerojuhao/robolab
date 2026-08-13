@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import torch
 from typing import TYPE_CHECKING
 
+import torch
+
+from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 from isaaclab.utils.math import quat_apply_inverse
-from isaaclab.assets import RigidObject, Articulation
 import isaaclab.utils.math as math_utils
 from robolab.sensors.volume_points import VolumePoints
 from robolab.sensors.volume_points.points_generator import grid3d_points_generator
@@ -16,12 +17,22 @@ from .terrain_family import (
     STAIRS_DOWN_FAMILY_ID,
     STAIRS_UP_FAMILY_ID,
     get_terrain_family_ids,
+    soft_absolute_clearance_unsupported,
     terrain_foot_point_weights,
 )
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+
+def action_smoothness_l2(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Action smoothness: ``||a_t - 2 a_{t-1} + a_{t-2}||_2^2`` via ``env.action_buffer``."""
+    action = env.action_buffer.buffer
+    reward = torch.sum(
+        torch.square(action[:, -3, :] - 2 * action[:, -2, :] + action[:, -1, :]),
+        dim=1,
+    )
+    return reward
 
 def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Reward long steps taken by the feet for bipeds.
@@ -98,54 +109,18 @@ def joint_deviation_l1(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scene
     return torch.sum(torch.abs(angle), dim=1)
 
 
-
-def rpo_thigh_yaw_inward_sym_penalty(
+def joint_deviation_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    scale: float = 1.0,
 ) -> torch.Tensor:
-    """Penalizes inward rotation: left_thigh_yaw > 0 and right_thigh_yaw < 0.
-
-    Sign convention (RPO URDF):
-        inward: left > 0, right < 0
-        outward:  left < 0, right > 0
-    """
+    """Penalize squared joint deviation from default, optionally scaling the offset first."""
     asset = env.scene[asset_cfg.name]
-    left_idx = asset.joint_names.index("left_thigh_yaw_joint")
-    right_idx = asset.joint_names.index("right_thigh_yaw_joint")
-    left_yaw = asset.data.joint_pos[:, left_idx]
-    right_yaw = asset.data.joint_pos[:, right_idx]
-    
-    left_inward = torch.relu(left_yaw - 0.00)
-    right_inward = torch.relu(-right_yaw - 0.00)
-    inward_penalty = left_inward + right_inward
-
-    return inward_penalty
+    angle = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    return torch.sum(torch.square(scale * angle), dim=1)
 
 
-def rp1_hip_yaw_inward_sym_penalty(
-    env: ManagerBasedRLEnv,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-) -> torch.Tensor:
-    """Penalizes inward rotation: left_thigh_yaw > 0 and right_thigh_yaw < 0.
 
-    Sign convention (RP1 URDF):
-        inward: left > 0, right < 0
-        outward:  left < 0, right > 0
-    """
-    asset = env.scene[asset_cfg.name]
-
-    left_idx = asset.joint_names.index("left_hip_yaw_joint")
-    right_idx = asset.joint_names.index("right_hip_yaw_joint")
-    left_yaw = asset.data.joint_pos[:, left_idx]
-    right_yaw = asset.data.joint_pos[:, right_idx]
-
-    left_inward = torch.relu(left_yaw - 0.00)
-    right_inward = torch.relu(-right_yaw - 0.00)
-    inward_penalty = left_inward + right_inward
-
-    return inward_penalty
-
-    
 def body_distance_y(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), min: float = 0.2, max: float = 0.5
 ) -> torch.Tensor:
@@ -220,17 +195,6 @@ def heading_error(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
     return ang_vel_cmd
 
 
-# def dont_wait(
-#     env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
-# ) -> torch.Tensor:
-#     """Penalize standing still when there is a forward velocity command."""
-#     # extract the used quantities (to enable type-hinting)
-#     asset: RigidObject = env.scene[asset_cfg.name]
-#     # compute the error
-#     lin_vel_cmd_x = env.command_manager.get_command(command_name)[:, 0]
-#     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
-#     return (lin_vel_cmd_x > 0.3) * ((lin_vel_x < 0.15).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
-
 def dont_wait(
     env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -293,53 +257,88 @@ def feet_orientation_contact(
     return penalty * enabled
 
 
+def _height_scanner_local_x(scanner, device: torch.device | str) -> torch.Tensor:
+    """Foot-local x of each height-scanner ray (matches ``ray_hits_w`` order)."""
+    pattern_cfg = scanner.cfg.pattern_cfg
+    ray_starts, _ = pattern_cfg.func(pattern_cfg, device)
+    return ray_starts[:, 0]
+
+
 def feet_at_plane(
     env: ManagerBasedRLEnv,
     contact_sensor_cfg: SceneEntityCfg,
     left_height_scanner_cfg: SceneEntityCfg,
     right_height_scanner_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    height_offset=0.035,
+    height_offset: float = 0.035,
+    height_tolerance: float = 0.03,
+    support_transition_width: float = 0.005,
+    enable_terrain_foot_weights: bool = False,
+    stairs_weight_min: float = 0.0,
+    stairs_weight_max: float = 1.0,
 ) -> torch.Tensor:
-    """Reward feet being at certain height above the ground plane."""
-    # extract the used quantities (to enable type-hinting)
+    """Penalize unsupported sole fraction while feet are in contact.
+
+    Uses the same soft absolute-clearance kernel as foothold ``support_ratio``.
+    With ``enable_terrain_foot_weights``, applies the same heel/toe terrain
+    weights as ``imagined_foothold_guidance`` / ``volume_points_penetration_feet``
+    (up-stairs toe-heavy, down-stairs heel-heavy, other mid-foot-heavy).
+    Returns the sum of per-foot unsupported ratios in ``[0, 2]``.
+    Pair with a negative reward weight.
+    """
     asset: RigidObject = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
     net_contact_forces = contact_sensor.data.net_forces_w_history
-    is_contact = torch.max(
-        torch.norm(net_contact_forces[:, :, contact_sensor_cfg.body_ids], dim=-1),
-        dim=1,
-    )[0] > 1
+    is_contact = (
+        torch.max(
+            torch.norm(net_contact_forces[:, :, contact_sensor_cfg.body_ids], dim=-1),
+            dim=1,
+        )[0]
+        > 1
+    )
     left_sensor = env.scene[left_height_scanner_cfg.name]
-    left_sensor_data = left_sensor.data.ray_hits_w[..., 2]
-    left_sensor_data = torch.where(
-        torch.isinf(left_sensor_data), 0.0, left_sensor_data
-    )
     right_sensor = env.scene[right_height_scanner_cfg.name]
-    right_sensor_data = right_sensor.data.ray_hits_w[..., 2]
-    right_sensor_data = torch.where(
-        torch.isinf(right_sensor_data), 0.0, right_sensor_data
-    )
-    left_height = asset.data.body_pos_w[:, asset_cfg.body_ids[0], 2]
-    right_height = asset.data.body_pos_w[:, asset_cfg.body_ids[1], 2]
+    left_heights = left_sensor.data.ray_hits_w[..., 2]
+    right_heights = right_sensor.data.ray_hits_w[..., 2]
+    left_foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids[0], 2]
+    right_foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids[1], 2]
 
-    left_reward = (
-        torch.clamp(
-            left_height.unsqueeze(-1) - left_sensor_data - height_offset,
-            min=0.0,
-            max=0.3,
+    left_weights = None
+    right_weights = None
+    if enable_terrain_foot_weights:
+        family_ids = get_terrain_family_ids(env)
+        left_weights = terrain_foot_point_weights(
+            _height_scanner_local_x(left_sensor, env.device),
+            family_ids,
+            stairs_weight_min,
+            stairs_weight_max,
         )
-        * is_contact[:, 0:1]
-    )
-    right_reward = (
-        torch.clamp(
-            right_height.unsqueeze(-1) - right_sensor_data - height_offset,
-            min=0.0,
-            max=0.3,
+        right_weights = terrain_foot_point_weights(
+            _height_scanner_local_x(right_sensor, env.device),
+            family_ids,
+            stairs_weight_min,
+            stairs_weight_max,
         )
-        * is_contact[:, 1:2]
+
+    left_unsupported = soft_absolute_clearance_unsupported(
+        left_foot_z.unsqueeze(-1),
+        left_heights,
+        height_offset=height_offset,
+        height_tolerance=height_tolerance,
+        transition_width=support_transition_width,
+        point_weights=left_weights,
     )
-    return torch.sum(left_reward, dim=-1) + torch.sum(right_reward, dim=-1)
+    right_unsupported = soft_absolute_clearance_unsupported(
+        right_foot_z.unsqueeze(-1),
+        right_heights,
+        height_offset=height_offset,
+        height_tolerance=height_tolerance,
+        transition_width=support_transition_width,
+        point_weights=right_weights,
+    )
+    return left_unsupported * is_contact[:, 0].float() + right_unsupported * is_contact[
+        :, 1
+    ].float()
 
 
 def link_orientation(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:

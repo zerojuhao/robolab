@@ -289,13 +289,13 @@ def perlin_platforms_terrain(
 def perlin_trapezoid_stairs_terrain(
     difficulty: float, cfg: hf_terrains_cfg.PerlinTrapezoidStairsTerrainCfg
 ) -> tuple[list[trimesh.Trimesh], np.ndarray]:
-    """Generate trapezoid stairs along y and return mesh(es) with origin.
+    """Generate trapezoid stairs along x and return mesh(es) with origin.
 
-    Only the +y and -y faces have stairs (full width along x). Viewed from the side (along x),
+    Only the +x and -x faces have stairs (full width along y). Viewed from the side (along y),
     the profile is trapezoidal with a flat platform at the center.
 
     Non-inverted: center platform is the highest point.
-    Inverted: center platform is the lowest point (z=0 after ground align); both y ends are higher.
+    Inverted: center platform is the lowest point (z=0 after ground align); both x ends are higher.
     Inverted terrains also get solid infill under the treads and rim heights extended into border.
     """
     if cfg.border_width > 0 and cfg.border_width < cfg.horizontal_scale:
@@ -327,17 +327,17 @@ def perlin_trapezoid_stairs_terrain(
 
     hf_raw = np.zeros((sub_width_px, sub_length_px))
     current_step_height = 0
-    start_y, stop_y = 0, sub_length_px
-    while (stop_y - start_y) > platform_width_px:
-        start_y += step_width_px
-        stop_y -= step_width_px
+    start_x, stop_x = 0, sub_width_px
+    while (stop_x - start_x) > platform_width_px:
+        start_x += step_width_px
+        stop_x -= step_width_px
         current_step_height += step_height_px
-        hf_raw[:, start_y:stop_y] = current_step_height
+        hf_raw[start_x:stop_x, :] = current_step_height
 
     if cfg.inverted:
-        rim_height = hf_raw[0, step_width_px]
-        hf_raw[:, :step_width_px] = rim_height
-        hf_raw[:, sub_length_px - step_width_px :] = rim_height
+        rim_height = hf_raw[step_width_px, 0]
+        hf_raw[:step_width_px, :] = rim_height
+        hf_raw[sub_width_px - step_width_px :, :] = rim_height
         hf_raw = hf_raw - np.min(hf_raw)
 
     z_base = np.rint(hf_raw).astype(np.int16)

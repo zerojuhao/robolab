@@ -865,6 +865,9 @@ def run_mujoco_onnx(
     viewer_fallback_width: int = 1280,
     viewer_fallback_height: int = 720,
     mujoco_full_ui: bool = False,
+    record_video: bool = True,
+    video_path: str = "simulation_parkour.mp4",
+    save_plots: bool = True,
 ) -> None:
     enc_in_name = depth_encoder.get_inputs()[0].name
     act_in_name = actor.get_inputs()[0].name
@@ -950,19 +953,24 @@ def run_mujoco_onnx(
     depth_vis_pending: tuple[np.ndarray, np.ndarray] | None = None
 
     if headless:
-        renderer = mujoco.Renderer(model, width=1920, height=1080)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        cam_vid = mujoco.MjvCamera()
-        cam_vid.distance = 4.0
-        cam_vid.azimuth = 45.0
-        cam_vid.elevation = -20.0
-        cam_vid.lookat = [0, 0, 1]
-        out = cv2.VideoWriter(
-            "simulation_parkour.mp4",
-            fourcc,
-            1.0 / cfg.sim_config.dt / cfg.sim_config.decimation,
-            (1920, 1080),
-        )
+        renderer = None
+        out = None
+        cam_vid = None
+        if record_video:
+            renderer = mujoco.Renderer(model, width=1920, height=1080)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            cam_vid = mujoco.MjvCamera()
+            cam_vid.distance = 4.0
+            cam_vid.azimuth = 45.0
+            cam_vid.elevation = -20.0
+            cam_vid.lookat = [0, 0, 1]
+            out = cv2.VideoWriter(
+                video_path,
+                fourcc,
+                1.0 / cfg.sim_config.dt / cfg.sim_config.decimation,
+                (1920, 1080),
+            )
+            print(f"[INFO] Recording video to {video_path}")
         viewer = None
         use_passive_viewer = False
         passive_viewer_ctx = None
@@ -1102,7 +1110,7 @@ def run_mujoco_onnx(
                     )
                 )
 
-            if headless:
+            if headless and renderer is not None and out is not None and cam_vid is not None:
                 renderer.update_scene(data, camera=cam_vid)
                 if cmd.camera_follow:
                     update_follow_camera(cam_vid, data, model)
@@ -1165,14 +1173,20 @@ def run_mujoco_onnx(
     if depth_renderer is not None and hasattr(depth_renderer, "close"):
         depth_renderer.close()
     if headless:
-        if hasattr(renderer, "close"):
+        if renderer is not None and hasattr(renderer, "close"):
             renderer.close()
-        out.release()
+        if out is not None:
+            out.release()
     else:
         if show_depth_vis:
             cv2.destroyAllWindows()
         close_interactive_viewer(viewer, use_passive_viewer, passive_viewer_ctx)
     keyboard_listener.stop()
+
+    if not save_plots:
+        if headless and out is not None:
+            print(f"[INFO] Video saved: {video_path}")
+        return
 
     # Plots (low frequency)
     time_data = np.asarray(time_data)
@@ -1213,6 +1227,8 @@ def run_mujoco_onnx(
     plt.tight_layout()
     fig2.savefig("base_velocities_parkour.png")
     print("Saved joint_positions_parkour.png, base_velocities_parkour.png")
+    if headless and out is not None:
+        print(f"[INFO] Video saved: {video_path}")
 
 
 if __name__ == "__main__":

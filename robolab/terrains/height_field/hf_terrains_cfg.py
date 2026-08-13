@@ -83,7 +83,7 @@ class PerlinPlatformsTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
 
 @configclass
 class PerlinTrapezoidStairsTerrainCfg(HfPyramidStairsTerrainCfg, WallTerrainCfgMixin):
-    """Trapezoid stairs along y-axis: only +y/-y faces have steps, full width along x."""
+    """Trapezoid stairs along x-axis: only +x/-x faces have steps, full width along y."""
 
     function = hf_terrains.perlin_trapezoid_stairs_terrain
     perlin_cfg: PerlinPlaneTerrainCfg | None = None
@@ -91,7 +91,7 @@ class PerlinTrapezoidStairsTerrainCfg(HfPyramidStairsTerrainCfg, WallTerrainCfgM
 
 @configclass
 class PerlinInvertedTrapezoidStairsTerrainCfg(HfInvertedPyramidStairsTerrainCfg, WallTerrainCfgMixin):
-    """Inverted trapezoid stairs along y-axis."""
+    """Inverted trapezoid stairs along x-axis."""
 
     function = hf_terrains.perlin_trapezoid_stairs_terrain
     perlin_cfg: PerlinPlaneTerrainCfg | None = None

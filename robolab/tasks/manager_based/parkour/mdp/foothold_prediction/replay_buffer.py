@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import torch
 
+# Touchdown label: base-frame ``(x, y, yaw)``.
+_TARGET_DIM = 3
+
 
 class FootholdReplayBuffer:
     def __init__(self, capacity: int, input_dim: int, device: torch.device | str) -> None:
         self.inputs = torch.zeros(capacity, input_dim, dtype=torch.float16, device=device)
-        self.targets = torch.zeros(capacity, 2, dtype=torch.float32, device=device)
+        self.targets = torch.zeros(capacity, _TARGET_DIM, dtype=torch.float32, device=device)
         self.foot_ids = torch.zeros(capacity, dtype=torch.long, device=device)
         self.capacity = capacity
         self.write_index = 0
@@ -23,6 +26,10 @@ class FootholdReplayBuffer:
         count = inputs.shape[0]
         if count == 0:
             return
+        if targets.shape[-1] != _TARGET_DIM:
+            raise ValueError(
+                f"Expected foothold targets last dim {_TARGET_DIM}, got {targets.shape[-1]}."
+            )
         if count > self.capacity:
             inputs = inputs[-self.capacity :]
             targets = targets[-self.capacity :]
@@ -54,6 +61,5 @@ class FootholdReplayBuffer:
         )
 
     def clear(self) -> None:
-        """Drop all stored samples (e.g. after terrain curriculum shifts on resume)."""
         self.write_index = 0
         self.size = 0

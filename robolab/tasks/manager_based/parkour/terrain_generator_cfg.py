@@ -55,6 +55,8 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
     slope_threshold=1.0,
     use_cache=False,
     curriculum=True,
+    # One column per sub-terrain; env counts follow proportion (num_cols is overridden).
+    one_col_per_subterrain=True,
     sub_terrains={
         "perlin_rough": terrain_gen.PerlinPlaneTerrainCfg(
             proportion=0.05,
@@ -143,8 +145,8 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
         ),
         "square_gaps": terrain_gen.PerlinSquareGapTerrainCfg(
             proportion=0.1,
-            gap_distance_range=(0.1, 0.4),
-            gap_depth=(0.2, 0.6),
+            gap_distance_range=(0.1, 0.3),
+            gap_depth=(0.3, 0.6),
             platform_width=2.0,
             border_width=1.0,
             wall_prob=[0.3, 0.3, 0.3, 0.3],
@@ -161,7 +163,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
             },
         ),
         "pyramid_stairs": terrain_gen.PerlinPyramidStairsTerrainCfg(
-            proportion=0.1,
+            proportion=0.15,
             step_height_range=(0.05, 0.20),
             step_width=0.30,
             platform_width=2.0,
@@ -188,7 +190,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
             },
         ),
         "pyramid_stairs_inv": terrain_gen.PerlinInvertedPyramidStairsTerrainCfg(
-            proportion=0.1,
+            proportion=0.15,
             step_height_range=(0.05, 0.20),
             step_width=0.30,
             platform_width=2.0,
@@ -215,8 +217,8 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
             },
         ),
         "platforms": terrain_gen.PerlinPlatformsTerrainCfg(
-            proportion=0.1,
-            platform_height_range=(0.05, 0.2),
+            proportion=0.15,
+            platform_height_range=(0.05, 0.3),
             band_width=0.6,
             center_width=2.0,
             border_width=0.5,
@@ -234,7 +236,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
             },
         ),
         "trapezoid_stairs": terrain_gen.PerlinTrapezoidStairsTerrainCfg(
-            proportion=0.1,
+            proportion=0.15,
             step_height_range=(0.05, 0.20),
             step_width=0.30,
             platform_width=2.0,
@@ -261,7 +263,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
             },
         ),
         "trapezoid_stairs_inv": terrain_gen.PerlinInvertedTrapezoidStairsTerrainCfg(
-            proportion=0.1,
+            proportion=0.15,
             step_height_range=(0.05, 0.20),
             step_width=0.30,
             platform_width=2.0,
@@ -359,7 +361,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
         #     },
         # ),
         "hf_pyramid_slope_inv": terrain_gen.PerlinInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1,
+            proportion=0.05,
             slope_range=(0.0, 0.2),
             platform_width=2.0,
             border_width=0.5,

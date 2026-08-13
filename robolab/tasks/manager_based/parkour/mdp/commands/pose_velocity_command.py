@@ -81,16 +81,21 @@ class PoseVelocityCommand(CommandTerm):
 
         if self.cfg.velocity_ranges is not None:
             terrain_generator_cfg = self.terrain.cfg.terrain_generator
-            proportions = np.array([sub_cfg.proportion for sub_cfg in terrain_generator_cfg.sub_terrains.values()])
-            proportions /= np.sum(proportions)
-
-            # find the sub-terrain index for each column
-            # we generate the terrains based on their proportion (not randomly sampled)
-            sub_indices = []
-            for index in range(terrain_generator_cfg.num_cols):
-                sub_index = np.min(np.where(index / terrain_generator_cfg.num_cols + 0.001 < np.cumsum(proportions))[0])
-                sub_indices.append(sub_index)
-            sub_indices = np.array(sub_indices, dtype=np.int32)
+            # Column → sub-terrain mapping from the generated grid (supports one-col-per-type).
+            terrain_gen = getattr(self.terrain, "terrain_generator", None)
+            grid = getattr(terrain_gen, "subterrain_index_grid", None) if terrain_gen is not None else None
+            if grid is not None:
+                sub_indices = np.asarray(grid[0], dtype=np.int32)
+            else:
+                proportions = np.array([sub_cfg.proportion for sub_cfg in terrain_generator_cfg.sub_terrains.values()])
+                proportions /= np.sum(proportions)
+                sub_indices = []
+                for index in range(terrain_generator_cfg.num_cols):
+                    sub_index = np.min(
+                        np.where(index / terrain_generator_cfg.num_cols + 0.001 < np.cumsum(proportions))[0]
+                    )
+                    sub_indices.append(sub_index)
+                sub_indices = np.array(sub_indices, dtype=np.int32)
             sub_terrains_names = list(terrain_generator_cfg.sub_terrains.keys())
             for key, value in self.cfg.velocity_ranges.items():
                 if key in sub_terrains_names:

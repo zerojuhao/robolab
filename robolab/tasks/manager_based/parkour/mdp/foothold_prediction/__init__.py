@@ -1,4 +1,4 @@
-"""Training-only foothold prediction components."""
+"""Foothold prediction components (privileged teacher / guidance)."""
 
 from .config import (
     FootholdGridCfg,
@@ -6,14 +6,14 @@ from .config import (
     normalize_foothold_grid_cfg,
     normalize_foothold_predictor_cfg,
 )
-from .grid import FootholdGaussianGeometry
+from .grid import FootholdGaussianGeometry, wrap_angle
 from .model import FootholdPredictor
 from .support import (
     FootholdSupportCfg,
     FootholdSupportEvaluator,
     normalize_foothold_support_cfg,
 )
-from .trainer import FootholdPredictorTrainer
+from .trainer import FootholdPredictorTrainer, empty_predictor_logs
 
 __all__ = [
     "FootholdGridCfg",
@@ -23,7 +23,9 @@ __all__ = [
     "FootholdGaussianGeometry",
     "FootholdSupportCfg",
     "FootholdSupportEvaluator",
+    "empty_predictor_logs",
     "normalize_foothold_predictor_cfg",
     "normalize_foothold_support_cfg",
     "normalize_foothold_grid_cfg",
+    "wrap_angle",
 ]
