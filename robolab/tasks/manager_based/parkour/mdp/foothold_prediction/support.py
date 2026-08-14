@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import torch
 
 from isaaclab.utils import configclass
+from isaaclab.utils.math import quat_apply
 from isaaclab.utils.warp import raycast_mesh
 
 from ..terrain_family import (
@@ -17,6 +18,8 @@ from ..terrain_family import (
 _MISS_PLANE_Z = -1.0e6
 _VALID_PLANE_MIN = -1.0e5
 _LEGACY_SUPPORT_KEYS = ("reward_sigma", "disable_slope_family", "slope_family_id")
+# Root pose for labels / support: pos(3) + quat(4) + left/right foot z in body frame (2).
+_BASE_FRAME_DIM = 9
 
 
 @configclass
@@ -142,21 +145,24 @@ class FootholdSupportEvaluator:
         env_ids: torch.Tensor,
         foot_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Raycast sole heights at predicted base-frame XY.
+        """Raycast sole heights at predicted body-frame XY.
 
         ``foot_yaws`` is world yaw with shape ``[num_envs, 2]``.
+        ``base_frames`` is ``[N, 9]``: root pos, root quat, per-foot body z.
         """
         frames = base_frames[env_ids]
+        if frames.shape[-1] != _BASE_FRAME_DIM:
+            raise ValueError(
+                f"Expected base frame last dim {_BASE_FRAME_DIM}, got {frames.shape[-1]}."
+            )
         foot_yaw = foot_yaws[env_ids, foot_ids]
-        cos_base = frames[:, 3]
-        sin_base = frames[:, 4]
-        xy_w = torch.stack(
-            (
-                frames[:, 0] + cos_base * xy_b[:, 0] - sin_base * xy_b[:, 1],
-                frames[:, 1] + sin_base * xy_b[:, 0] + cos_base * xy_b[:, 1],
-            ),
-            dim=-1,
+        root_pos = frames[:, :3]
+        root_quat = frames[:, 3:7]
+        foot_z_b = torch.where(foot_ids == 0, frames[:, 7], frames[:, 8])
+        delta_w = quat_apply(
+            root_quat, torch.stack((xy_b[:, 0], xy_b[:, 1], foot_z_b), dim=-1)
         )
+        xy_w = root_pos[:, :2] + delta_w[:, :2]
 
         offsets_w = self._sole_offsets_w(foot_ids, foot_yaw)
         num_pairs = xy_w.shape[0]
@@ -256,6 +262,7 @@ class FootholdSupportEvaluator:
             height_tolerance=self.cfg.height_tolerance,
             transition_width=self.cfg.support_transition_width,
             point_weights=point_w,
+            unsupported_only=True,
         )
         deficiency = torch.nan_to_num(
             deficiency, nan=1.0, posinf=1.0, neginf=1.0

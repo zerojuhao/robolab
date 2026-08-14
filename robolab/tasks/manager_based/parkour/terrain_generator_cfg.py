@@ -146,7 +146,7 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
         "square_gaps": terrain_gen.PerlinSquareGapTerrainCfg(
             proportion=0.1,
             gap_distance_range=(0.1, 0.3),
-            gap_depth=(0.3, 0.6),
+            gap_depth=(0.15, 0.6),
             platform_width=2.0,
             border_width=1.0,
             wall_prob=[0.3, 0.3, 0.3, 0.3],

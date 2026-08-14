@@ -5,24 +5,24 @@
 
 from __future__ import annotations
 
-from typing import Sequence
-
 import torch
 from tensordict import TensorDict
 
-FOOTHOLD_EXCLUDE_TERMS: frozenset[str] = frozenset({"foothold_teacher_xy"})
+
+def resolve_foothold_predictor_obs(obs: TensorDict) -> TensorDict:
+    """Use critic terms as the privileged teacher input."""
+    group = obs["critic"] if "critic" in obs else obs
+    if isinstance(group, TensorDict):
+        return group
+    return obs
 
 
-def build_foothold_predictor_state(
-    critic_obs: TensorDict,
-    exclude_terms: Sequence[str] | None = None,
-) -> torch.Tensor:
-    """Flatten critic terms into the privileged foothold-teacher input."""
-    exclude = set(exclude_terms) if exclude_terms is not None else set(FOOTHOLD_EXCLUDE_TERMS)
-    parts = [term for name, term in critic_obs.items() if name not in exclude]
+def build_foothold_predictor_state(privileged_obs: TensorDict) -> torch.Tensor:
+    """Flatten critic terms into the foothold-teacher input.
+
+    Teacher input is this vector plus the current clipped action.
+    """
+    parts = list(privileged_obs.values())
     if not parts:
-        raise ValueError(
-            "No foothold predictor input terms found in critic obs after filtering. "
-            f"exclude={sorted(exclude)}."
-        )
+        raise ValueError("No foothold predictor input terms found in critic observations.")
     return torch.cat(parts, dim=-1)

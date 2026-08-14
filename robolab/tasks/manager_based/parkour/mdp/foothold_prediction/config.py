@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import MISSING
+from dataclasses import MISSING, fields
 
 from isaaclab.utils import configclass
 
@@ -26,6 +26,13 @@ class FootholdGridCfg:
     """XY quadrature half-width in units of sigma."""
     expectation_eval_chunk_size: int = 64
     """Environment-foot pairs per support-evaluation chunk."""
+    reward_sigma_min: float = 0.0
+    """Floor on XY sigma used only for swing-guidance quadrature, in meters.
+
+    NLL still uses the learned sigma. ``<=0`` disables the floor. A value around
+    0.08–0.10 lets the 5×5 grid reach nearby stair edges when the teacher is
+    overconfident (learned sigma ≈ 3 cm).
+    """
 
 
 @configclass
@@ -39,6 +46,18 @@ class FootholdPredictorCfg:
     ema_decay: float = MISSING
     grid: FootholdGridCfg = MISSING
     nll_loss_coef: float = 1.0
+    nll_horizon_tau: float = 0.0
+    """NLL horizon scale in remaining steps-to-contact. ``<=0`` is uniform NLL."""
+    nll_horizon_weight_min: float = 0.25
+    """Floor on NLL sample weights when ``nll_horizon_tau > 0``."""
+    guidance_horizon_tau: float = 8.0
+    """Guidance weight scale in elapsed swing steps. ``<=0`` is uniform guidance.
+
+    Early swing (action can still change the landing) is up-weighted:
+    ``w = max(min, exp(-elapsed / tau))``. Independent of NLL weighting.
+    """
+    guidance_horizon_weight_min: float = 0.25
+    """Floor on late-swing guidance weights when ``guidance_horizon_tau > 0``."""
     max_pending_steps: int = MISSING
     pending_sample_stride: int = MISSING
     train_pending_tail_steps: int = MISSING
@@ -48,6 +67,7 @@ class FootholdPredictorCfg:
     updates_per_iteration: int = MISSING
     min_train_samples: int = MISSING
     curriculum_level_threshold: float = MISSING
+    """Enable terrain-ready after mean inverted-stairs (``stairs``+``inv``) curriculum exceeds this."""
     enable_xy_rmse_threshold: float = MISSING
     """Enable swing guidance after teacher XY RMSE falls below this value, in meters."""
     enable_yaw_rmse_threshold: float = MISSING
@@ -104,5 +124,7 @@ def normalize_foothold_predictor_cfg(
         values["grid"] = normalize_foothold_grid_cfg(values["grid"])
         for key in _LEGACY_PREDICTOR_KEYS:
             values.pop(key, None)
+        valid = {item.name for item in fields(FootholdPredictorCfg)}
+        values = {key: value for key, value in values.items() if key in valid}
         return FootholdPredictorCfg(**values)
     raise TypeError(f"Unsupported foothold predictor config type: {type(cfg)!r}")

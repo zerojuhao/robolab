@@ -1,13 +1,17 @@
 """Imagined foothold prediction and swing-support guidance.
 
-The privileged teacher consumes critic observations plus the current action and
-predicts the next contact XY and relative landing yaw for both feet. Training,
-prediction, reward, and contact logs are stairs-only.
+The privileged teacher consumes the critic observation group plus the current
+action and predicts the next contact XY and relative landing yaw for both feet.
+Labels use the same full-root-quaternion body frame as the foothold targets.
+Training, prediction, reward, and contact logs are stairs-only.
 
 Locomotion ``feet_at_plane`` penalizes currently unsupported stance. This module
 pre-penalizes the teacher-expected unsupported fraction of feet that were swinging
 when the action was applied, using the predicted landing yaw to rotate the sole.
-Pending swing samples use the same force-history contact mask as ``feet_at_plane``.
+Guidance weights early swing more (the action can still change the landing) and
+near-contact less. Teacher NLL is uniform across remaining steps-to-contact.
+Pending swing samples use the same force-history contact mask as
+``feet_at_plane``.
 """
 
 from __future__ import annotations
@@ -18,7 +22,13 @@ import torch
 
 from isaaclab.sensors import ContactSensor
 from isaaclab.sensors.ray_caster.ray_caster import RayCaster
-from isaaclab.utils.math import wrap_to_pi
+from isaaclab.utils.math import (
+    quat_apply_inverse,
+    quat_conjugate,
+    quat_from_euler_xyz,
+    quat_mul,
+    wrap_to_pi,
+)
 
 from .foothold_prediction import (
     FootholdPredictorCfg,
@@ -31,6 +41,8 @@ from .foothold_prediction import (
 )
 from .terrain_family import (
     FOOTHOLD_GUIDANCE_FAMILY_IDS,
+    STAIRS_DOWN_FAMILY_ID,
+    STAIRS_UP_FAMILY_ID,
     get_terrain_family_ids,
 )
 
@@ -41,6 +53,13 @@ __all__ = ["FootholdImaginationManager", "FootholdSupportCfg", "imagined_foothol
 
 # Flattened teacher pose: ``[lx, ly, lyaw, rx, ry, ryaw]``.
 _TEACHER_FLAT_DIM = 6
+# Root pos (3) + quat (4) + left/right foot body-frame z (2).
+_BASE_FRAME_DIM = 9
+_HORIZON_BIN_EDGES = (4, 8, 16)
+_HORIZON_BIN_NAMES = ("h0_3", "h4_7", "h8_15", "h16p")
+_FAMILY_BIN_NAMES = ("stairs_down", "stairs_up")
+# Per-bin: count, xy_se, x_sum, y_sum, x_se, y_se.
+_DIAG_STAT_DIM = 6
 
 
 def _family_is_foothold_active(family_ids: torch.Tensor) -> torch.Tensor:
@@ -86,10 +105,21 @@ class FootholdImaginationManager:
         self._pending_write = torch.zeros(self.num_envs, 2, dtype=torch.long, device=self.device)
         self._contact_support_stats = torch.zeros(2, dtype=torch.float64, device=self.device)
         self._guidance_reward_stats = torch.zeros(2, dtype=torch.float64, device=self.device)
+        # deficiency sum/count, eval-sigma sum/count, horizon-weight sum.
+        self._swing_guidance_stats = torch.zeros(5, dtype=torch.float64, device=self.device)
+        self._horizon_diag_stats = torch.zeros(
+            len(_HORIZON_BIN_NAMES), _DIAG_STAT_DIM, dtype=torch.float64, device=self.device
+        )
+        self._family_diag_stats = torch.zeros(
+            len(_FAMILY_BIN_NAMES), _DIAG_STAT_DIM, dtype=torch.float64, device=self.device
+        )
         self._terrain_ready_mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._prediction_valid = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._swing_at_prepare = torch.zeros(
             self.num_envs, 2, dtype=torch.bool, device=self.device
+        )
+        self._swing_age_at_prepare = torch.zeros(
+            self.num_envs, 2, dtype=torch.long, device=self.device
         )
         self._latest_mu_b: torch.Tensor | None = None
         self._latest_yaw_b: torch.Tensor | None = None
@@ -172,18 +202,37 @@ class FootholdImaginationManager:
                 self.num_envs,
                 2,
                 self.cfg.max_pending_steps,
-                5,
+                _BASE_FRAME_DIM,
                 dtype=torch.float32,
                 device=self.device,
             )
 
     def _base_frame_snapshot(self) -> torch.Tensor:
-        base_pos = self._robot.data.root_pos_w
-        yaw = _yaw_from_quat(self._robot.data.root_quat_w)
-        return torch.cat(
-            (base_pos, torch.cos(yaw).unsqueeze(-1), torch.sin(yaw).unsqueeze(-1)),
-            dim=-1,
+        """Root pose plus per-foot body-frame z for labeling touchdowns."""
+        root_pos = self._robot.data.root_pos_w
+        root_quat = self._robot.data.root_quat_w
+        foot_pos_w = self._robot.data.body_pos_w[:, self._foot_body_ids]
+        foot_pos_b = quat_apply_inverse(
+            root_quat.unsqueeze(1).expand(-1, 2, -1),
+            foot_pos_w - root_pos.unsqueeze(1),
         )
+        return torch.cat((root_pos, root_quat, foot_pos_b[..., 2]), dim=-1)
+
+    def _touchdown_pose_in_frames(
+        self,
+        touchdown_pos_w: torch.Tensor,
+        touchdown_quat_w: torch.Tensor,
+        frames: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Body-frame XY and relative yaw of a contact pose in each pending root frame."""
+        root_pos = frames[..., :3]
+        root_quat = frames[..., 3:7]
+        pos_b = quat_apply_inverse(root_quat, touchdown_pos_w.unsqueeze(1) - root_pos)
+        rel_quat = quat_mul(
+            quat_conjugate(root_quat),
+            touchdown_quat_w.unsqueeze(1).expand_as(root_quat),
+        )
+        return pos_b[..., :2], wrap_to_pi(_yaw_from_quat(rel_quat))
 
     def _stairs_active(self) -> torch.Tensor:
         return self._terrain_ready_mask & _family_is_foothold_active(
@@ -193,11 +242,23 @@ class FootholdImaginationManager:
     def stairs_active_mask(self) -> torch.Tensor:
         return self._stairs_active()
 
+    def _guidance_horizon_weight(self, elapsed_steps: torch.Tensor) -> torch.Tensor:
+        """Early-swing weight: action can still change the landing.
+
+        Uses elapsed swing as a causal proxy because remaining time is unknown.
+        Independent of teacher NLL sample weights.
+        """
+        tau = float(self.cfg.guidance_horizon_tau)
+        if tau <= 0.0:
+            return torch.ones(elapsed_steps.shape[0], device=self.device, dtype=torch.float32)
+        floor = max(float(self.cfg.guidance_horizon_weight_min), 0.0)
+        return torch.exp(-elapsed_steps.to(dtype=torch.float32) / tau).clamp(min=floor)
+
     def enable_inference_guidance(self) -> None:
         self._terrain_ready_mask.fill_(True)
 
     def latest_mu_flat(self) -> torch.Tensor:
-        """Teacher pose ``[N, 6]`` in the current base frame. Inactive envs are NaN."""
+        """Teacher pose ``[N, 6]`` in the current body frame. Inactive envs are NaN."""
         return self._latest_mu_flat
 
     def _store_prediction(
@@ -212,8 +273,10 @@ class FootholdImaginationManager:
         self._latest_yaw_b = mean_yaw
         self._latest_sigma = sigma_xy
         self._latest_base_frame = base_frame
-        base_yaw = torch.atan2(base_frame[:, 4], base_frame[:, 3])
-        self._latest_yaw_w = wrap_to_pi(base_yaw.unsqueeze(-1) + mean_yaw)
+        zeros = torch.zeros_like(mean_yaw)
+        rel_quat = quat_from_euler_xyz(zeros, zeros, mean_yaw)
+        root_quat = base_frame[:, 3:7].unsqueeze(1).expand(-1, 2, -1)
+        self._latest_yaw_w = wrap_to_pi(_yaw_from_quat(quat_mul(root_quat, rel_quat)))
         self._prediction_valid.copy_(active)
         pose = torch.cat((mean_xy, mean_yaw.unsqueeze(-1)), dim=-1)
         self._latest_mu_flat.copy_(pose.reshape(self.num_envs, _TEACHER_FLAT_DIM))
@@ -258,6 +321,7 @@ class FootholdImaginationManager:
 
         mean_xy, mean_yaw, sigma_xy = self.trainer.predict(predictor_input)
         self._store_prediction(mean_xy, mean_yaw, sigma_xy, base_frame, active)
+        self._swing_age_at_prepare.copy_(self._pending_counts)
         self._prepared = True
         self._step_counter += 1
 
@@ -294,7 +358,10 @@ class FootholdImaginationManager:
         if event_env_ids.numel() == 0:
             return
 
-        touchdown_xy = foot_pos_w[event_env_ids, event_foot_ids, :2]
+        touchdown_pos_w = foot_pos_w[event_env_ids, event_foot_ids]
+        touchdown_quat_w = self._robot.data.body_quat_w[:, self._foot_body_ids][
+            event_env_ids, event_foot_ids
+        ]
         max_pending = int(self.cfg.max_pending_steps)
         inputs = self._pending_inputs[event_env_ids, event_foot_ids]
         frames = self._pending_frames[event_env_ids, event_foot_ids]
@@ -305,16 +372,10 @@ class FootholdImaginationManager:
         inputs = torch.gather(inputs, 1, gather_idx.unsqueeze(-1).expand_as(inputs))
         frames = torch.gather(frames, 1, gather_idx.unsqueeze(-1).expand_as(frames))
 
-        delta_xy = touchdown_xy[:, None] - frames[..., :2]
-        cos_yaw = frames[..., 3]
-        sin_yaw = frames[..., 4]
-        target_x = cos_yaw * delta_xy[..., 0] + sin_yaw * delta_xy[..., 1]
-        target_y = -sin_yaw * delta_xy[..., 0] + cos_yaw * delta_xy[..., 1]
-        touchdown_yaw = _yaw_from_quat(self._robot.data.body_quat_w[:, self._foot_body_ids])[
-            event_env_ids, event_foot_ids
-        ]
-        target_yaw = wrap_to_pi(touchdown_yaw.unsqueeze(1) - torch.atan2(sin_yaw, cos_yaw))
-        targets = torch.stack((target_x, target_y, target_yaw), dim=-1)
+        target_xy, target_yaw = self._touchdown_pose_in_frames(
+            touchdown_pos_w, touchdown_quat_w, frames
+        )
+        targets = torch.cat((target_xy, target_yaw.unsqueeze(-1)), dim=-1)
 
         sample_mask = step_ids.unsqueeze(0) < event_counts.unsqueeze(1)
         tail_steps = int(self.cfg.train_pending_tail_steps)
@@ -323,11 +384,83 @@ class FootholdImaginationManager:
                 step_ids.unsqueeze(0) >= (event_counts.unsqueeze(1) - tail_steps)
             )
         replay_foot_ids = event_foot_ids.unsqueeze(1).expand_as(sample_mask)
+        steps_to_contact = event_counts.unsqueeze(1) - 1 - step_ids
+        family_ids = get_terrain_family_ids(self.env)[event_env_ids]
+        self._accumulate_label_diagnostics(
+            inputs[sample_mask],
+            targets[sample_mask],
+            replay_foot_ids[sample_mask],
+            steps_to_contact.expand_as(sample_mask)[sample_mask],
+            family_ids.unsqueeze(1).expand_as(sample_mask)[sample_mask],
+        )
         self.trainer.add_samples(
             inputs[sample_mask],
             targets[sample_mask],
             replay_foot_ids[sample_mask],
+            steps_to_contact.expand_as(sample_mask)[sample_mask],
         )
+
+    def _horizon_bin_ids(self, steps_to_contact: torch.Tensor) -> torch.Tensor:
+        edges = torch.tensor(_HORIZON_BIN_EDGES, device=self.device, dtype=steps_to_contact.dtype)
+        return torch.bucketize(steps_to_contact, edges)
+
+    def _accumulate_diag_stats(
+        self,
+        stats: torch.Tensor,
+        bin_ids: torch.Tensor,
+        xy_err: torch.Tensor,
+    ) -> None:
+        if bin_ids.numel() == 0:
+            return
+        num_bins = stats.shape[0]
+        valid = (bin_ids >= 0) & (bin_ids < num_bins)
+        if not valid.any():
+            return
+        bin_ids = bin_ids[valid].long()
+        xy_err = xy_err[valid]
+        ones = torch.ones(bin_ids.shape[0], dtype=torch.float64, device=self.device)
+        stats[:, 0].scatter_add_(0, bin_ids, ones)
+        stats[:, 1].scatter_add_(0, bin_ids, xy_err.square().sum(dim=-1).double())
+        stats[:, 2].scatter_add_(0, bin_ids, xy_err[:, 0].double())
+        stats[:, 3].scatter_add_(0, bin_ids, xy_err[:, 1].double())
+        stats[:, 4].scatter_add_(0, bin_ids, xy_err[:, 0].square().double())
+        stats[:, 5].scatter_add_(0, bin_ids, xy_err[:, 1].square().double())
+
+    def _accumulate_label_diagnostics(
+        self,
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        foot_ids: torch.Tensor,
+        steps_to_contact: torch.Tensor,
+        family_ids: torch.Tensor,
+    ) -> None:
+        if inputs.shape[0] == 0 or self.trainer is None:
+            return
+        mean_xy, _mean_yaw, _sigma = self.trainer.predict(inputs.to(dtype=torch.float32))
+        batch_ids = torch.arange(inputs.shape[0], device=self.device)
+        xy_err = mean_xy[batch_ids, foot_ids] - targets[..., :2]
+        self._accumulate_diag_stats(
+            self._horizon_diag_stats, self._horizon_bin_ids(steps_to_contact), xy_err
+        )
+        family_bins = torch.full_like(family_ids, -1)
+        family_bins = torch.where(family_ids == STAIRS_DOWN_FAMILY_ID, 0, family_bins)
+        family_bins = torch.where(family_ids == STAIRS_UP_FAMILY_ID, 1, family_bins)
+        self._accumulate_diag_stats(self._family_diag_stats, family_bins, xy_err)
+
+    def _diag_logs_from_stats(
+        self, prefix: str, names: tuple[str, ...], stats: torch.Tensor
+    ) -> dict[str, float]:
+        logs: dict[str, float] = {}
+        for bin_id, name in enumerate(names):
+            count = float(stats[bin_id, 0].item())
+            if count <= 0.0:
+                continue
+            logs[f"{prefix}/{name}/xy_rmse_m"] = (stats[bin_id, 1].item() / count) ** 0.5
+            logs[f"{prefix}/{name}/x_bias_m"] = stats[bin_id, 2].item() / count
+            logs[f"{prefix}/{name}/y_bias_m"] = stats[bin_id, 3].item() / count
+            logs[f"{prefix}/{name}/x_rmse_m"] = (stats[bin_id, 4].item() / count) ** 0.5
+            logs[f"{prefix}/{name}/y_rmse_m"] = (stats[bin_id, 5].item() / count) ** 0.5
+        return logs
 
     def _finalize_contacts(self) -> None:
         first_contact = self._contact_sensor.compute_first_contact(self.env.step_dt)[
@@ -357,7 +490,7 @@ class FootholdImaginationManager:
         stairs_weight_min: float = 0.0,
         stairs_weight_max: float = 1.0,
     ) -> torch.Tensor:
-        """Sum of per-swing-foot expected unsupported fractions in ``[0, 2]``."""
+        """Sum of horizon-weighted per-swing-foot expected unsupported fractions."""
         self._ensure_scene_handles()
         self._finalize_contacts()
         reward = torch.zeros(self.num_envs, device=self.device)
@@ -375,16 +508,17 @@ class FootholdImaginationManager:
 
         family_ids = get_terrain_family_ids(self.env)
         eligible_env = self._stairs_active() & self._prediction_valid
-        eligible = eligible_env.unsqueeze(-1).expand(-1, 2)
-
-        swing_deficiency = torch.zeros(self.num_envs, 2, device=self.device)
-        swing_pairs = (self._swing_at_prepare & eligible).nonzero(as_tuple=False)
+        weighted_deficiency = torch.zeros(self.num_envs, 2, device=self.device)
+        swing_pairs = (self._swing_at_prepare & eligible_env.unsqueeze(-1)).nonzero(
+            as_tuple=False
+        )
         if swing_pairs.numel() > 0:
             env_ids = swing_pairs[:, 0]
             foot_ids = swing_pairs[:, 1]
+            eval_sigma = self.trainer.grid.reward_sigma(self._latest_sigma[env_ids, foot_ids])
             candidate_xy, candidate_weights = self.trainer.grid.expectation_points(
                 self._latest_mu_b[env_ids, foot_ids],
-                self._latest_sigma[env_ids, foot_ids],
+                eval_sigma,
             )
             predicted = self._support_evaluator.expected_support_deficiency(
                 candidate_xy,
@@ -399,9 +533,17 @@ class FootholdImaginationManager:
                 stairs_weight_max=stairs_weight_max,
                 eval_chunk_size=self.cfg.grid.expectation_eval_chunk_size,
             )
-            swing_deficiency[env_ids, foot_ids] = predicted
+            horizon_weight = self._guidance_horizon_weight(
+                self._swing_age_at_prepare[env_ids, foot_ids]
+            )
+            weighted_deficiency[env_ids, foot_ids] = predicted * horizon_weight
+            self._swing_guidance_stats[0] += predicted.double().sum()
+            self._swing_guidance_stats[1] += float(predicted.numel())
+            self._swing_guidance_stats[2] += eval_sigma.double().sum()
+            self._swing_guidance_stats[3] += float(eval_sigma.numel())
+            self._swing_guidance_stats[4] += horizon_weight.double().sum()
 
-        reward[eligible_env] = swing_deficiency[eligible_env].sum(dim=-1)
+        reward[eligible_env] = weighted_deficiency[eligible_env].sum(dim=-1)
         active_reward = reward[eligible_env]
         self._guidance_reward_stats[0] += active_reward.double().sum()
         self._guidance_reward_stats[1] += float(active_reward.numel())
@@ -414,6 +556,7 @@ class FootholdImaginationManager:
         self._pending_write[env_ids] = 0
         self._prediction_valid[env_ids] = False
         self._swing_at_prepare[env_ids] = False
+        self._swing_age_at_prepare[env_ids] = 0
         for latest in (
             self._latest_mu_b,
             self._latest_yaw_b,
@@ -431,15 +574,27 @@ class FootholdImaginationManager:
         else:
             metrics = empty_predictor_logs()
 
+        family_ids = get_terrain_family_ids(self.env)
+        inv_stairs = family_ids == STAIRS_UP_FAMILY_ID
+        inv_levels = self.env.scene.terrain.terrain_levels.float()
         rollout_stats = torch.tensor(
             (
-                self.env.scene.terrain.terrain_levels.float().sum().item(),
-                self.num_envs,
+                inv_levels[inv_stairs].sum().item() if bool(inv_stairs.any()) else 0.0,
+                float(inv_stairs.sum().item()),
             ),
             dtype=torch.float64,
             device=self.device,
         )
-        rollout_stats = torch.cat((rollout_stats, self._contact_support_stats, self._guidance_reward_stats))
+        rollout_stats = torch.cat(
+            (
+                rollout_stats,
+                self._contact_support_stats,
+                self._guidance_reward_stats,
+                self._swing_guidance_stats,
+                self._horizon_diag_stats.reshape(-1),
+                self._family_diag_stats.reshape(-1),
+            )
+        )
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.all_reduce(rollout_stats, op=torch.distributed.ReduceOp.SUM)
         (
@@ -449,20 +604,51 @@ class FootholdImaginationManager:
             contact_count,
             guidance_reward_sum,
             guidance_reward_count,
-        ) = rollout_stats.tolist()
-
-        if terrain_level_sum / environment_count > self.cfg.curriculum_level_threshold:
-            self._terrain_ready_mask.fill_(True)
-
-        metrics["Foothold/Contact/support_ratio"] = (
-            contact_support_sum / contact_count if contact_count > 0.0 else 0.0
+            swing_deficiency_sum,
+            swing_deficiency_count,
+            eval_sigma_sum,
+            eval_sigma_count,
+            horizon_weight_sum,
+        ) = rollout_stats[:11].tolist()
+        offset = 11
+        horizon_n = self._horizon_diag_stats.numel()
+        family_n = self._family_diag_stats.numel()
+        horizon_stats = rollout_stats[offset : offset + horizon_n].view_as(self._horizon_diag_stats)
+        family_stats = rollout_stats[offset + horizon_n : offset + horizon_n + family_n].view_as(
+            self._family_diag_stats
         )
+
+        inv_stairs_mean = (
+            terrain_level_sum / environment_count if environment_count > 0.0 else 0.0
+        )
+        if inv_stairs_mean > self.cfg.curriculum_level_threshold:
+            self._terrain_ready_mask.fill_(True)
+        metrics["Foothold/Guidance/inv_stairs_level"] = inv_stairs_mean
+
+        if contact_count > 0.0:
+            metrics["Foothold/Contact/support_ratio"] = contact_support_sum / contact_count
+        # Eligible-stair mean of the reward tensor (stance zeros included).
+        # Swing-only signal is ``swing_deficiency``; Episode_Reward is further diluted.
         metrics["Foothold/Guidance/reward"] = (
             guidance_reward_sum / guidance_reward_count if guidance_reward_count > 0.0 else 0.0
         )
+        if swing_deficiency_count > 0.0:
+            metrics["Foothold/Guidance/swing_deficiency"] = (
+                swing_deficiency_sum / swing_deficiency_count
+            )
+            metrics["Foothold/Guidance/horizon_weight"] = (
+                horizon_weight_sum / swing_deficiency_count
+            )
+        if eval_sigma_count > 0.0:
+            metrics["Foothold/Guidance/eval_sigma_m"] = eval_sigma_sum / eval_sigma_count
+        metrics.update(self._diag_logs_from_stats("Foothold/Horizon", _HORIZON_BIN_NAMES, horizon_stats))
+        metrics.update(self._diag_logs_from_stats("Foothold/Terrain", _FAMILY_BIN_NAMES, family_stats))
 
         self._contact_support_stats.zero_()
         self._guidance_reward_stats.zero_()
+        self._swing_guidance_stats.zero_()
+        self._horizon_diag_stats.zero_()
+        self._family_diag_stats.zero_()
         return metrics
 
     def state_dict(self) -> dict:
@@ -493,7 +679,7 @@ def imagined_foothold_guidance(
     stairs_weight_min: float = 0.0,
     stairs_weight_max: float = 1.0,
 ) -> torch.Tensor:
-    """Swing-foot expected unsupported fraction. Pair with a negative reward weight."""
+    """Swing-foot expected unsupported fraction, stronger early in swing. Pair with a negative weight."""
     manager = getattr(env, "foothold_guidance", None)
     if manager is None:
         return torch.zeros(env.num_envs, device=env.device)

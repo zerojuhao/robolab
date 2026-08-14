@@ -137,6 +137,16 @@ def _grid_scan_left_right_dims(
     return hist_length, ny, nx
 
 
+def _swap_pair_and_flip_y(feats: torch.Tensor, hist: int) -> torch.Tensor:
+    """Mirror flattened ``[hist, 2, 3]`` positions: swap L/R and negate Y."""
+    out = feats.view(feats.shape[0], hist, 2, 3).clone()
+    swapped = out.clone()
+    swapped[:, :, 0] = out[:, :, 1]
+    swapped[:, :, 1] = out[:, :, 0]
+    swapped[..., 1] = -swapped[..., 1]
+    return swapped.reshape(feats.shape)
+
+
 def _transform_height_scan_left_right(
     hs: torch.Tensor,
     hist: int,
@@ -146,25 +156,6 @@ def _transform_height_scan_left_right(
     """Mirror lateral (y) grid rows; scalars only reorder (unlike ``depth_image``, scan is flat w.r.t. spatial axes)."""
     out = hs.view(hs.shape[0], hist, ny, nx).flip(dims=[2])
     return out.reshape(hs.shape)
-
-
-def _swap_pair_and_flip_y(feats: torch.Tensor, hist: int) -> torch.Tensor:
-    """Mirror flattened ``[hist, 2, 3]`` body features: swap L/R and flip base-frame Y."""
-    out = feats.view(feats.shape[0], hist, 2, 3).clone()
-    swapped = out.clone()
-    swapped[:, :, 0] = out[:, :, 1]
-    swapped[:, :, 1] = out[:, :, 0]
-    swapped[..., 1] = -swapped[..., 1]
-    return swapped.reshape(feats.shape)
-
-
-def _swap_pair_scalar(feats: torch.Tensor, hist: int) -> torch.Tensor:
-    """Mirror flattened ``[hist, 2]`` scalar features by swapping L/R."""
-    out = feats.view(feats.shape[0], hist, 2).clone()
-    swapped = out.clone()
-    swapped[:, :, 0] = out[:, :, 1]
-    swapped[:, :, 1] = out[:, :, 0]
-    return swapped.reshape(feats.shape)
 
 
 def _transform_policy_obs_left_right(obs: TensorDict) -> TensorDict:
@@ -192,28 +183,14 @@ def _transform_critic_obs_left_right(env: ManagerBasedRLEnv, obs: TensorDict) ->
     obs["joint_pos"] = _switch_joints_left_right_flat(obs["joint_pos"])
     obs["joint_vel"] = _switch_joints_left_right_flat(obs["joint_vel"])
     obs["actions"] = _switch_joints_left_right_flat(obs["actions"])
-    if "depth_image" in obs:
-        obs["depth_image"] = _transform_depth_obs_left_right(obs["depth_image"])
-    if "foot_lin_vel" in obs:
-        obs["foot_lin_vel"] = _swap_pair_and_flip_y(obs["foot_lin_vel"], cfg.foot_lin_vel.history_length)
-    if "foot_contact" in obs:
-        obs["foot_contact"] = _swap_pair_scalar(obs["foot_contact"], cfg.foot_contact.history_length)
     if "foot_pos_b" in obs:
-        obs["foot_pos_b"] = _swap_pair_and_flip_y(obs["foot_pos_b"], cfg.foot_pos_b.history_length)
+        hist = cfg.foot_pos_b.history_length or 1
+        obs["foot_pos_b"] = _swap_pair_and_flip_y(obs["foot_pos_b"], hist)
     if "height_scan" in obs:
         hist, ny, nx = _grid_scan_left_right_dims(
             env, "height_scanner", cfg.height_scan.history_length
         )
         obs["height_scan"] = _transform_height_scan_left_right(obs["height_scan"], hist, ny, nx)
-    if "estimation_height_scan" in obs:
-        hist, ny, nx = _grid_scan_left_right_dims(
-            env,
-            "estimation_height_scanner",
-            cfg.estimation_height_scan.history_length,
-        )
-        obs["estimation_height_scan"] = _transform_height_scan_left_right(
-            obs["estimation_height_scan"], hist, ny, nx
-        )
     if "left_foot_height_map" in obs and "right_foot_height_map" in obs:
         hist, ny, nx = _grid_scan_left_right_dims(
             env, "left_height_scanner", cfg.left_foot_height_map.history_length

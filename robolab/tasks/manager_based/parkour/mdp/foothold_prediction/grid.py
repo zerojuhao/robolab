@@ -72,6 +72,13 @@ class FootholdGaussianGeometry:
         weights = self.standard_weights.expand(weight_shape)
         return points, weights
 
+    def reward_sigma(self, sigma: torch.Tensor) -> torch.Tensor:
+        """Widen XY sigma for support quadrature without changing the trained σ."""
+        floor = float(getattr(self.cfg, "reward_sigma_min", 0.0))
+        if floor <= 0.0:
+            return sigma
+        return sigma.clamp(min=floor)
+
     @property
     def signature(self) -> tuple:
         return (

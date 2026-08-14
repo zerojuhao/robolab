@@ -277,13 +277,12 @@ def feet_at_plane(
     stairs_weight_min: float = 0.0,
     stairs_weight_max: float = 1.0,
 ) -> torch.Tensor:
-    """Penalize unsupported sole fraction while feet are in contact.
+    """Penalize hanging sole mass while feet are in contact.
 
-    Uses the same soft absolute-clearance kernel as foothold ``support_ratio``.
-    With ``enable_terrain_foot_weights``, applies the same heel/toe terrain
-    weights as ``imagined_foothold_guidance`` / ``volume_points_penetration_feet``
-    (up-stairs toe-heavy, down-stairs heel-heavy, other mid-foot-heavy).
-    Returns the sum of per-foot unsupported ratios in ``[0, 2]``.
+    Same clearance kernel as imagined foothold support: only points with
+    ``u_i > 0.5`` enter the numerator; the denominator is the full sole weight
+    sum, so more hanging area yields a larger penalty. Terrain heel/toe weights
+    amplify hanging points. Returns the sum of per-foot values in ``[0, 2]``.
     Pair with a negative reward weight.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
@@ -327,6 +326,7 @@ def feet_at_plane(
         height_tolerance=height_tolerance,
         transition_width=support_transition_width,
         point_weights=left_weights,
+        unsupported_only=True,
     )
     right_unsupported = soft_absolute_clearance_unsupported(
         right_foot_z.unsqueeze(-1),
@@ -335,6 +335,7 @@ def feet_at_plane(
         height_tolerance=height_tolerance,
         transition_width=support_transition_width,
         point_weights=right_weights,
+        unsupported_only=True,
     )
     return left_unsupported * is_contact[:, 0].float() + right_unsupported * is_contact[
         :, 1

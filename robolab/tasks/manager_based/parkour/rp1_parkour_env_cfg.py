@@ -25,11 +25,12 @@ KEY_BODY_NAMES = [
 RP1_24DOF_CFG.init_state.pos = (0.0, 0.0, 0.85)
 AMP_NUM_STEPS = 8
 
-# Shared with feet_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
+# Shared by feet_volume_points (penetration) and foot height-scan (critic / support).
+# Tune the shoe box here; scan center and size follow x/y bounds.
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
-    x_min=-0.11,
-    x_max=0.13,
-    x_num=25,
+    x_min=-0.13,
+    x_max=0.15,
+    x_num=29,
     y_min=-0.04,
     y_max=0.04,
     y_num=9,
@@ -43,7 +44,6 @@ FOOT_HEIGHT_SCAN_CENTER = (
     0.5 * (FEET_VOLUME_POINTS_GRID.x_min + FEET_VOLUME_POINTS_GRID.x_max),
     0.5 * (FEET_VOLUME_POINTS_GRID.y_min + FEET_VOLUME_POINTS_GRID.y_max),
 )
-# Match ParkourEnvCfg foot height-map grid (slightly narrower in y than the shoe volume).
 FOOT_HEIGHT_SCAN_SIZE = (
     FEET_VOLUME_POINTS_GRID.x_max - FEET_VOLUME_POINTS_GRID.x_min,
     0.04,
@@ -93,8 +93,8 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         )
         self.motion_data.motion_dataset.motion_data_weights = {
             # CMU
-            "36_01": 1,
-            "36_11": 1,
+            # "36_01": 1,
+            # "36_11": 1,
             "114_09": 1,
             # ACCAD
             "A1-_Stand_stageii": 1,

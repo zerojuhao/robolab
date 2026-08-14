@@ -66,12 +66,19 @@ def soft_absolute_clearance_unsupported(
     transition_width: float = 0.005,
     point_weights: torch.Tensor | None = None,
     miss_unsupported: float = 1.0,
+    unsupported_only: bool = False,
 ) -> torch.Tensor:
-    """Weighted-mean unsupported fraction from absolute foot-to-terrain clearance.
+    """Weighted unsupported fraction from absolute foot-to-terrain clearance.
 
     ``clearance = foot_z - terrain_z - height_offset`` (sole bottom above terrain).
     Soft support uses ``sigmoid((height_tolerance - clearance) / width)``.
     Invalid rays contribute ``miss_unsupported``. Result is roughly in ``[0, 1]``.
+
+    Default averages every sole point (supported points dilute the rate).
+    ``unsupported_only`` zeros supported points in the numerator
+    (``u_i <= 0.5``, i.e. clearance inside the tolerance band) but still
+    divides by the full weight sum, so more hanging area yields a larger value
+    and ``point_weights`` only amplify hanging points.
     """
     clearance = foot_z - terrain_z - height_offset
     width = max(float(transition_width), 1.0e-6)
@@ -80,6 +87,10 @@ def soft_absolute_clearance_unsupported(
     unsupported = torch.where(
         valid, 1.0 - support, torch.full_like(support, miss_unsupported)
     )
+    if unsupported_only:
+        unsupported = torch.where(
+            unsupported > 0.5, unsupported, torch.zeros_like(unsupported)
+        )
     if point_weights is None:
         point_weights = torch.ones(
             unsupported.shape[-1], device=unsupported.device, dtype=unsupported.dtype

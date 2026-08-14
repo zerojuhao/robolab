@@ -15,6 +15,7 @@ from robolab.tasks.manager_based.parkour.mdp.foothold_imagination import (
 )
 from robolab.tasks.manager_based.parkour.mdp.observations.foothold_observations import (
     build_foothold_predictor_state,
+    resolve_foothold_predictor_obs,
 )
 from robolab.tasks.manager_based.parkour.parkour_env import ParkourEnv
 
@@ -32,7 +33,7 @@ class SSREnv(ParkourEnv):
         self.foothold_guidance = FootholdImaginationManager(
             self, predictor_cfg, self.cfg.foothold_support
         )
-        print("[INFO] SSR imagined foothold guidance enabled.")
+        print("[INFO] SSR imagined foothold guidance enabled (critic obs + current action).")
 
     def step(self, action: torch.Tensor) -> VecEnvStepReturn:
         obs, rew, terminated, truncated, extras = super().step(action)
@@ -43,16 +44,17 @@ class SSREnv(ParkourEnv):
 
     def prepare_foothold_prediction_step(
         self,
-        critic_obs: TensorDict,
+        obs: TensorDict,
         action: torch.Tensor,
         enable_inference_guidance: bool = False,
     ) -> None:
-        """Predict footholds from critic obs + action before simulation advances."""
+        """Predict footholds from the critic observation group plus action."""
         if self.foothold_guidance is None:
             return
         if enable_inference_guidance:
             self.foothold_guidance.enable_inference_guidance()
-        self.foothold_guidance.prepare_step(build_foothold_predictor_state(critic_obs), action)
+        privileged = resolve_foothold_predictor_obs(obs)
+        self.foothold_guidance.prepare_step(build_foothold_predictor_state(privileged), action)
 
     def update_foothold_predictor(self) -> dict[str, float]:
         if self.foothold_guidance is None:

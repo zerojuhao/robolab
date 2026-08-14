@@ -28,7 +28,7 @@ class FootholdRewardsCfg(MultiRewardCfg):
         weight=-1.0,
         params={
             "enable_terrain_foot_weights": True,
-            "stairs_weight_min": 0.0,
+            "stairs_weight_min": 0.1,
             "stairs_weight_max": 1.0,
         },
     )
@@ -43,11 +43,14 @@ class SSRRewardsCfg(MultiRewardCfg):
 
 
 def enable_ssr_foothold_guidance(cfg: ParkourEnvCfg) -> None:
-    """Attach the foothold reward head and support geometry."""
+    """Attach the foothold reward head and support geometry.
+
+    The privileged teacher reads the critic observation group plus the current action.
+    """
     locomotion = cfg.rewards.locomotion
     cfg.rewards = SSRRewardsCfg(locomotion=locomotion, foothold=FootholdRewardsCfg())
     cfg.foothold_support = FootholdSupportCfg(
         height_offset=0.035,
-        height_tolerance=0.03,
+        height_tolerance=0.015,
         support_transition_width=0.005,
     )
