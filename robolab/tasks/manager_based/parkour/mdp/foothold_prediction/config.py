@@ -26,12 +26,20 @@ class FootholdGridCfg:
     """XY quadrature half-width in units of sigma."""
     expectation_eval_chunk_size: int = 64
     """Environment-foot pairs per support-evaluation chunk."""
-    reward_sigma_min: float = 0.0
+    expectation_weighting: str = "max"
+    """How to reduce support over the XY quadrature grid.
+
+    ``max`` takes the worst hanging sample in the neighborhood so an edge in
+    the tail is not washed out. ``uniform`` averages equally. ``gaussian`` is
+    the learned-density expectation.
+    """
+    reward_sigma_min: float = 0.04
     """Floor on XY sigma used only for swing-guidance quadrature, in meters.
 
-    NLL still uses the learned sigma. ``<=0`` disables the floor. A value around
-    0.08–0.10 lets the 5×5 grid reach nearby stair edges when the teacher is
-    overconfident (learned sigma ≈ 3 cm).
+    NLL still uses the learned sigma. ``<=0`` disables the floor. With
+    ``expectation_std_range=2``, 0.04 m covers ±8 cm around μ. Larger floors
+    (e.g. 0.08 → ±16 cm) let max() fire on centered landings: treads are
+    0.30 m and the sole is 0.26 m, so the on-tread ankle window is ~4 cm.
     """
 
 
@@ -46,6 +54,13 @@ class FootholdPredictorCfg:
     ema_decay: float = MISSING
     grid: FootholdGridCfg = MISSING
     nll_loss_coef: float = 1.0
+    """Weight on heteroscedastic XY/yaw Gaussian NLL."""
+    xy_mean_loss_coef: float = 2.0
+    """Weight on direct XY Smooth L1 regression."""
+    yaw_mean_loss_coef: float = 0.5
+    """Weight on wrapped-yaw Smooth L1 regression."""
+    mean_loss_beta: float = 0.02
+    """Smooth L1 transition width for XY meters and yaw radians."""
     nll_horizon_tau: float = 0.0
     """NLL horizon scale in remaining steps-to-contact. ``<=0`` is uniform NLL."""
     nll_horizon_weight_min: float = 0.25
@@ -65,6 +80,10 @@ class FootholdPredictorCfg:
     train_buffer_capacity: int = MISSING
     batch_size: int = MISSING
     updates_per_iteration: int = MISSING
+    balanced_sampling: bool = True
+    """Balance replay batches over terrain family, foot, and contact horizon."""
+    balanced_candidate_multiplier: int = 8
+    """Uniform candidate-pool multiplier used by approximate balanced sampling."""
     min_train_samples: int = MISSING
     curriculum_level_threshold: float = MISSING
     """Enable terrain-ready after mean inverted-stairs (``stairs``+``inv``) curriculum exceeds this."""

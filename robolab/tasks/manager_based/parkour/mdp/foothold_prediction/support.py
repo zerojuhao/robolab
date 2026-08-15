@@ -17,21 +17,36 @@ from ..terrain_family import (
 
 _MISS_PLANE_Z = -1.0e6
 _VALID_PLANE_MIN = -1.0e5
-_LEGACY_SUPPORT_KEYS = ("reward_sigma", "disable_slope_family", "slope_family_id")
+_LEGACY_SUPPORT_KEYS = (
+    "reward_sigma",
+    "disable_slope_family",
+    "slope_family_id",
+    "height_offset",
+)
 # Root pose for labels / support: pos(3) + quat(4) + left/right foot z in body frame (2).
 _BASE_FRAME_DIM = 9
 
 
 @configclass
 class FootholdSupportCfg:
-    """Sole geometry and clearance kernel shared with ``feet_at_plane``."""
+    """Sole scan geometry for imagined guidance and contact-support logs.
+
+    The max-plane kernel sits the sole on the highest finite terrain under the
+    shoe. Hanging is ``height_tolerance`` below that plane.
+    ``feet_at_plane`` keeps its own ankle-relative ``height_offset``.
+    """
 
     foot_body_names: list[str] = ["left_ankle_roll_link", "right_ankle_roll_link"]
     contact_sensor_name: str = "contact_forces"
     height_scanner_names: list[str] = ["left_height_scanner", "right_height_scanner"]
-    height_offset: float = 0.035
     height_tolerance: float = 0.03
     support_transition_width: float = 0.005
+    touchdown_support_ratio_min: float = 0.6
+    """Minimum supported sole fraction accepted as a touchdown label."""
+    touchdown_vertical_force_ratio: float = 1.0
+    """Require vertical force to exceed this multiple of horizontal force."""
+    touchdown_vertical_force_min: float = 5.0
+    """Minimum vertical contact force accepted as touchdown, in newtons."""
     ray_start_height: float = 2.0
     ray_max_distance: float = 10.0
 
@@ -71,14 +86,6 @@ class FootholdSupportEvaluator:
         self.sole_offsets = sole_offsets
         self.terrain_mesh = terrain_mesh
         self.device = device
-        self._origin_index = torch.tensor(
-            [
-                int(offsets.square().sum(dim=-1).argmin().item())
-                for offsets in sole_offsets
-            ],
-            dtype=torch.long,
-            device=device,
-        )
 
     def _sole_offsets_w(
         self, foot_ids: torch.Tensor, foot_yaws: torch.Tensor
@@ -97,23 +104,18 @@ class FootholdSupportEvaluator:
         offset_y_w = sin_foot * offsets[..., 0] + cos_foot * offsets[..., 1]
         return torch.stack((offset_x_w, offset_y_w), dim=-1)
 
-    def _support_plane_from_heights(
-        self, heights: torch.Tensor, foot_ids: torch.Tensor
-    ) -> torch.Tensor:
-        """Terrain height at the sole origin. Origin misses fall back to max finite height."""
-        pair_ids = torch.arange(heights.shape[0], device=self.device)
-        origin = heights[pair_ids, self._origin_index[foot_ids]]
-        fallback = (
-            torch.where(
-                torch.isfinite(heights),
-                heights,
-                torch.full_like(heights, _MISS_PLANE_Z),
-            )
-            .max(dim=-1)
-            .values
-        )
-        origin_ok = torch.isfinite(origin) & (origin > _VALID_PLANE_MIN)
-        return torch.where(origin_ok, origin, fallback)
+    def _support_plane_from_heights(self, heights: torch.Tensor) -> torch.Tensor:
+        """Highest finite terrain under the sole.
+
+        Clearance is relative to this plane, so a foot half on a tread and half
+        over the drop scores as hanging. Snapping to the origin ray hid that
+        case whenever the sample center was already off the tread.
+        """
+        return torch.where(
+            torch.isfinite(heights),
+            heights,
+            torch.full_like(heights, _MISS_PLANE_Z),
+        ).max(dim=-1).values
 
     def _sole_terrain_point_weights(
         self,
@@ -202,6 +204,29 @@ class FootholdSupportEvaluator:
         )
         return ray_hits[..., 2]
 
+    def _unsupported_from_heights(
+        self,
+        heights: torch.Tensor,
+        point_w: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Hanging fraction relative to the highest finite point under the sole."""
+        support_plane = self._support_plane_from_heights(heights)
+        plane_ok = torch.isfinite(support_plane) & (support_plane > _VALID_PLANE_MIN)
+        foot_z = support_plane.unsqueeze(-1)
+        deficiency = soft_absolute_clearance_unsupported(
+            foot_z,
+            heights,
+            height_offset=0.0,
+            height_tolerance=self.cfg.height_tolerance,
+            transition_width=self.cfg.support_transition_width,
+            point_weights=point_w,
+            unsupported_only=True,
+        )
+        deficiency = torch.nan_to_num(
+            deficiency, nan=1.0, posinf=1.0, neginf=1.0
+        ).clamp(0.0, 1.0)
+        return torch.where(plane_ok, deficiency, torch.ones_like(deficiency))
+
     def contact_support_ratio(
         self,
         foot_pos_w: torch.Tensor,
@@ -209,26 +234,20 @@ class FootholdSupportEvaluator:
         foot_ids: torch.Tensor,
         family_ids: torch.Tensor | None = None,
         enable_terrain_foot_weights: bool = True,
-        stairs_weight_min: float = 0.0,
+        stairs_weight_min: float = 0.1,
         stairs_weight_max: float = 1.0,
     ) -> torch.Tensor:
-        """Supported sole fraction at a real contact pose."""
+        """Supported sole fraction at a real contact, same kernel as imagined guidance."""
         point_w = None
         if enable_terrain_foot_weights and family_ids is not None:
             point_w = self._sole_terrain_point_weights(
                 foot_ids, family_ids, stairs_weight_min, stairs_weight_max
             )
-        unsupported = _finite_or_zero(
-            soft_absolute_clearance_unsupported(
-                foot_pos_w[:, 2].unsqueeze(-1),
-                self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids),
-                height_offset=self.cfg.height_offset,
-                height_tolerance=self.cfg.height_tolerance,
-                transition_width=self.cfg.support_transition_width,
-                point_weights=point_w,
-            )
+        unsupported = self._unsupported_from_heights(
+            self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids),
+            point_w,
         )
-        return 1.0 - unsupported
+        return 1.0 - _finite_or_zero(unsupported)
 
     def _support_deficiency_for_xy(
         self,
@@ -253,20 +272,7 @@ class FootholdSupportEvaluator:
                 stairs_weight_min,
                 stairs_weight_max,
             )
-        support_plane = self._support_plane_from_heights(heights, foot_ids)
-        foot_z = (support_plane + self.cfg.height_offset).unsqueeze(-1)
-        deficiency = soft_absolute_clearance_unsupported(
-            foot_z,
-            heights,
-            height_offset=self.cfg.height_offset,
-            height_tolerance=self.cfg.height_tolerance,
-            transition_width=self.cfg.support_transition_width,
-            point_weights=point_w,
-            unsupported_only=True,
-        )
-        deficiency = torch.nan_to_num(
-            deficiency, nan=1.0, posinf=1.0, neginf=1.0
-        ).clamp(0.0, 1.0)
+        deficiency = self._unsupported_from_heights(heights, point_w)
         deficiency = torch.where(
             _pose_ok(xy_w, foot_yaw), deficiency, torch.ones_like(deficiency)
         )
@@ -285,11 +291,13 @@ class FootholdSupportEvaluator:
         stairs_weight_min: float = 0.0,
         stairs_weight_max: float = 1.0,
         eval_chunk_size: int = 64,
+        reduction: str = "mean",
     ) -> torch.Tensor:
-        """Expected unsupported fraction over XY quadrature samples.
+        """Unsupported fraction over XY quadrature samples.
 
         ``candidate_xy_b`` is ``[P, G, 2]`` and ``candidate_weights`` is ``[P, G]``.
         ``foot_yaws`` is predicted world yaw ``[num_envs, 2]``.
+        ``reduction`` is ``max`` (worst sample) or ``mean`` (weighted average).
         """
         num_pairs, num_candidates = candidate_weights.shape
         if num_pairs == 0:
@@ -298,6 +306,7 @@ class FootholdSupportEvaluator:
             raise ValueError(
                 "candidate_xy_b must have shape [P, G, 2] matching candidate_weights."
             )
+        reduce_max = str(reduction).lower() == "max"
         weights = torch.nan_to_num(
             candidate_weights, nan=0.0, posinf=0.0, neginf=0.0
         ).clamp_min(0.0)
@@ -323,5 +332,8 @@ class FootholdSupportEvaluator:
                 stairs_weight_min=stairs_weight_min,
                 stairs_weight_max=stairs_weight_max,
             ).view(pair_count, num_candidates)
-            expected[start:end] = (weights[start:end] * flat_deficiency).sum(dim=-1)
+            if reduce_max:
+                expected[start:end] = flat_deficiency.max(dim=-1).values
+            else:
+                expected[start:end] = (weights[start:end] * flat_deficiency).sum(dim=-1)
         return _finite_or_zero(expected).clamp(0.0, 1.0)

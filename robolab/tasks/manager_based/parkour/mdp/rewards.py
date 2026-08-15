@@ -13,6 +13,7 @@ from robolab.sensors.volume_points import VolumePoints
 from robolab.sensors.volume_points.points_generator import grid3d_points_generator
 from robolab.sensors.volume_points.points_generator_cfg import Grid3dPointsGeneratorCfg
 
+from .contact_metrics import horizontal_force_excess
 from .terrain_family import (
     STAIRS_DOWN_FAMILY_ID,
     STAIRS_UP_FAMILY_ID,
@@ -358,14 +359,29 @@ def link_ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scene
     link_ang_vel_xy = asset.data.body_ang_vel_w[:, asset_cfg.body_ids, :2]
     return torch.sum(torch.square(link_ang_vel_xy), dim=(1, 2))
 
-def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
-    # extract the used quantities (to enable type-hinting)
+def feet_stumble(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    horizontal_ratio: float = 1.0,
+    force_threshold: float = 20.0,
+    force_scale: float = 100.0,
+    max_penalty: float = 1.0,
+) -> torch.Tensor:
+    """Continuously penalize horizontal-dominant foot impacts.
+
+    The history maximum preserves short impacts between policy steps. The
+    bounded output keeps the existing stumble reward curriculum meaningful.
+    """
+    if force_scale <= 0.0:
+        raise ValueError(f"force_scale must be positive, got {force_scale}.")
+    if max_penalty <= 0.0:
+        raise ValueError(f"max_penalty must be positive, got {max_penalty}.")
+
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    forces_z = torch.abs(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2])
-    forces_xy = torch.linalg.norm(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :2], dim=2)
-    # Penalize feet hitting vertical surfaces
-    reward = torch.any(forces_xy > 1 * forces_z, dim=1).float()
-    return reward
+    forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    excess = horizontal_force_excess(forces, horizontal_ratio, force_threshold)
+    penalty = torch.clamp(excess / force_scale, max=max_penalty)
+    return penalty.amax(dim=(1, 2))
 
 def track_lin_vel_xy_exp(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")

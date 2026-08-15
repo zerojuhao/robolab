@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import warnings
 
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 
 from isaaclab.utils.math import wrap_to_pi
@@ -12,16 +14,19 @@ from isaaclab.utils.math import wrap_to_pi
 from .config import FootholdPredictorCfg
 from .grid import FootholdGaussianGeometry
 from .model import FootholdPredictor
-from .replay_buffer import FootholdReplayBuffer
+from .normalization import RunningMeanStd
+from .replay_buffer import FOOTHOLD_REPLAY_FAMILY_IDS, FootholdReplayBuffer
 
-# Body-frame XY+yaw labels in the full-root-quaternion frame.
-LABEL_FRAME = "body_quat_xy_v1"
+# Supported-touchdown body-frame XY+yaw labels in the full-root-quaternion frame.
+LABEL_FRAME = "supported_touchdown_body_quat_xy_v2"
 
 
 def empty_predictor_logs(reward_enabled: bool = False) -> dict[str, float]:
     """Zeroed foothold logs used before the trainer exists or replay is ready."""
     return {
         "Foothold/Loss/nll": 0.0,
+        "Foothold/Loss/xy_mean": 0.0,
+        "Foothold/Loss/yaw_mean": 0.0,
         "Foothold/Loss/nll_horizon_weight": 0.0,
         "Foothold/Accuracy/xy_rmse_m": 0.0,
         "Foothold/Accuracy/xy_rmse_near_m": 0.0,
@@ -48,6 +53,7 @@ class FootholdPredictorTrainer:
         self.cfg = cfg
         self.device = device
         self.grid = FootholdGaussianGeometry(cfg.grid, device)
+        self.input_normalizer = RunningMeanStd((input_dim,), device)
         if not cfg.hidden_dims:
             raise ValueError("FootholdPredictorCfg.hidden_dims is required.")
         self.model = FootholdPredictor(input_dim, list(cfg.hidden_dims)).to(device)
@@ -74,8 +80,11 @@ class FootholdPredictorTrainer:
         targets: torch.Tensor,
         foot_ids: torch.Tensor,
         steps_to_contact: torch.Tensor,
+        family_ids: torch.Tensor,
     ) -> None:
-        self.train_buffer.append(inputs, targets, foot_ids, steps_to_contact)
+        self.train_buffer.append(
+            inputs, targets, foot_ids, steps_to_contact, family_ids
+        )
 
     def clear_train_buffer(self) -> None:
         self.train_buffer.clear()
@@ -87,7 +96,7 @@ class FootholdPredictorTrainer:
         """Return mean XY ``[N,2,2]``, mean yaw ``[N,2]``, and XY sigma ``[N,2]``."""
         self.ema_model.eval()
         mean_xy, mean_yaw, sigma_xy, _sigma_yaw = self.grid.decode_distribution(
-            self.ema_model(predictor_input)
+            self.ema_model(self.input_normalizer(predictor_input))
         )
         return mean_xy, mean_yaw, sigma_xy
 
@@ -108,7 +117,7 @@ class FootholdPredictorTrainer:
         steps_to_contact: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         pred_xy, pred_yaw, pred_sigma_xy, pred_sigma_yaw = self.grid.decode_distribution(
-            model(predictor_input)
+            model(self.input_normalizer(predictor_input))
         )
         batch_ids = torch.arange(predictor_input.shape[0], device=self.device)
         xy_foot = pred_xy[batch_ids, foot_ids]
@@ -129,8 +138,18 @@ class FootholdPredictorTrainer:
         if finite.any():
             weighted = sample_weight[finite]
             nll = (per_sample[finite] * weighted).sum() / weighted.sum().clamp_min(1.0e-8)
+            xy_mean_loss = F.smooth_l1_loss(
+                xy_foot[finite], target[finite, :2], beta=float(self.cfg.mean_loss_beta)
+            )
+            yaw_mean_loss = F.smooth_l1_loss(
+                wrap_to_pi(yaw_foot[finite] - target[finite, 2]),
+                torch.zeros_like(yaw_foot[finite]),
+                beta=float(self.cfg.mean_loss_beta),
+            )
         else:
             nll = xy_foot.sum() * 0.0
+            xy_mean_loss = xy_foot.sum() * 0.0
+            yaw_mean_loss = yaw_foot.sum() * 0.0
 
         valid_xy = xy_squared_error[finite]
         valid_yaw = yaw_squared_error[finite]
@@ -142,6 +161,8 @@ class FootholdPredictorTrainer:
         zero = xy_foot.new_zeros(())
         metrics = {
             "nll": nll.detach(),
+            "xy_mean_loss": xy_mean_loss.detach(),
+            "yaw_mean_loss": yaw_mean_loss.detach(),
             "xy_rmse": (valid_xy.mean().sqrt() if valid_xy.numel() else zero).detach(),
             "xy_rmse_near": (
                 xy_squared_error[near].mean().sqrt() if near.any() else zero
@@ -162,7 +183,12 @@ class FootholdPredictorTrainer:
                 sample_weight[finite].mean() if finite.any() else zero
             ).detach(),
         }
-        return float(self.cfg.nll_loss_coef) * nll, metrics
+        loss = (
+            float(self.cfg.nll_loss_coef) * nll
+            + float(self.cfg.xy_mean_loss_coef) * xy_mean_loss
+            + float(self.cfg.yaw_mean_loss_coef) * yaw_mean_loss
+        )
+        return loss, metrics
 
     @torch.no_grad()
     def _update_ema_model(self) -> None:
@@ -190,8 +216,11 @@ class FootholdPredictorTrainer:
         self.model.train()
         for _ in range(self.cfg.updates_per_iteration):
             inputs, targets, foot_ids, steps_to_contact = self.train_buffer.sample(
-                self.cfg.batch_size
+                self.cfg.batch_size,
+                balanced=self.cfg.balanced_sampling,
+                candidate_multiplier=self.cfg.balanced_candidate_multiplier,
             )
+            self.input_normalizer.update(inputs)
             loss, _ = self._losses(
                 self.model, inputs, targets, foot_ids, steps_to_contact
             )
@@ -221,6 +250,8 @@ class FootholdPredictorTrainer:
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             packed_keys = (
                 "nll",
+                "xy_mean_loss",
+                "yaw_mean_loss",
                 "xy_rmse",
                 "xy_rmse_near",
                 "x_rmse",
@@ -251,6 +282,8 @@ class FootholdPredictorTrainer:
 
         return {
             "Foothold/Loss/nll": metric_values["nll"],
+            "Foothold/Loss/xy_mean": metric_values["xy_mean_loss"],
+            "Foothold/Loss/yaw_mean": metric_values["yaw_mean_loss"],
             "Foothold/Loss/nll_horizon_weight": metric_values["nll_horizon_weight"],
             "Foothold/Accuracy/xy_rmse_m": metric_values["xy_rmse"],
             "Foothold/Accuracy/xy_rmse_near_m": metric_values["xy_rmse_near"],
@@ -270,7 +303,9 @@ class FootholdPredictorTrainer:
             "input_dim": self.input_dim,
             "grid_signature": self.grid.signature,
             "label_frame": LABEL_FRAME,
+            "foothold_family_ids": FOOTHOLD_REPLAY_FAMILY_IDS,
             "reward_enabled": self.reward_enabled,
+            "input_normalizer": self.input_normalizer.state_dict(),
             "model": self.model.state_dict(),
             "ema_model": self.ema_model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
@@ -291,12 +326,36 @@ class FootholdPredictorTrainer:
                 "Checkpoint used a shared critic foothold head; train the standalone "
                 "predictor from scratch."
             )
+        if state.get("label_frame") != LABEL_FRAME or "input_normalizer" not in state:
+            warnings.warn(
+                "Ignoring incompatible foothold predictor state: the checkpoint "
+                "predates supported-touchdown labels or input normalization. The "
+                "predictor will train from scratch.",
+                stacklevel=2,
+            )
+            self.reward_enabled = False
+            return
         self.model.load_state_dict(state["model"])
         self.ema_model.load_state_dict(state["ema_model"])
+        normalizer_state = state["input_normalizer"]
+        if "mean" in normalizer_state:
+            normalizer_state = {
+                "_mean": normalizer_state["mean"],
+                "_var": normalizer_state["var"],
+                "count": normalizer_state["count"],
+            }
+        self.input_normalizer.load_state_dict(normalizer_state)
         if load_optimizer and "optimizer" in state:
             self.optimizer.load_state_dict(state["optimizer"])
-        # Old yaw-horizontal labels are a different target; keep weights but re-gate.
-        if state.get("label_frame") == LABEL_FRAME:
-            self.reward_enabled = bool(state.get("reward_enabled", False))
-        else:
-            self.reward_enabled = False
+        saved_family_ids = tuple(state.get("foothold_family_ids", ()))
+        family_coverage_matches = saved_family_ids == FOOTHOLD_REPLAY_FAMILY_IDS
+        if not family_coverage_matches:
+            warnings.warn(
+                "Foothold predictor terrain-family coverage changed; retaining model "
+                "weights but disabling guidance until the refreshed replay reaches "
+                "the configured accuracy thresholds.",
+                stacklevel=2,
+            )
+        self.reward_enabled = (
+            bool(state.get("reward_enabled", False)) and family_coverage_matches
+        )

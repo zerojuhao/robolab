@@ -459,21 +459,21 @@ class CommandsCfg:
         ranges=mdp.PoseVelocityCommandCfg.Ranges(lin_vel_x=(0.0, 0.0), lin_vel_y=(0.0, 0.0), ang_vel_z=(-1.0, 1.0)),
         random_velocity_terrain=["perlin_rough_x", "perlin_rough_y", "perlin_rough_z", "perlin_rough_stand"],
         velocity_ranges={
-            "perlin_rough": {"lin_vel_x": (0.4, 1.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "perlin_rough": {"lin_vel_x": (0.4, 1.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
             "perlin_rough_x": {"lin_vel_x": (-0.5, 1.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
             "perlin_rough_y": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (0.0, 0.0)},
-            "perlin_rough_z": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "perlin_rough_z": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
-            "square_gaps": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pyramid_stairs": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pyramid_stairs_inv": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "platforms": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "trapezoid_stairs": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "trapezoid_stairs_inv": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            # "threshold_bars": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            # "boxes": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            # "mesh_boxes": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "hf_pyramid_slope_inv": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "square_gaps": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "pyramid_stairs": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "pyramid_stairs_inv": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "platforms": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "trapezoid_stairs": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "trapezoid_stairs_inv": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            # "threshold_bars": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            # "boxes": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            # "mesh_boxes": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "hf_pyramid_slope_inv": {"lin_vel_x": (0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
         },
         only_positive_lin_vel_x=False,
         lin_vel_threshold=0.0,
@@ -573,7 +573,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
             "left_height_scanner_cfg": SceneEntityCfg("left_height_scanner"),
             "right_height_scanner_cfg": SceneEntityCfg("right_height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
-            "height_offset": 0.035,
+            "height_offset": 0.03,
             "height_tolerance": 0.03,
             "support_transition_width": 0.005,
             "enable_terrain_foot_weights": True,
@@ -647,7 +647,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
             )
         },
     )
-    joint_regularization = RewTerm(func=mdp.joint_deviation_l1, weight=-1e-2)
+    joint_regularization = RewTerm(func=mdp.joint_deviation_l1, weight=-1e-3)
 
     # Effort, smoothness, and energy
     dof_torques_l2 = RewTerm(
@@ -707,7 +707,13 @@ class ParkourRewardsCfg(MultiRewardCfg):
         func=mdp.feet_stumble,
         weight=-1.0,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_ankle_roll_link", ".*_knee_link"]),
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=[".*_ankle_roll_link"]
+            ),
+            "horizontal_ratio": 1.0,
+            "force_threshold": 20.0,
+            "force_scale": 100.0,
+            "max_penalty": 1.0,
         },
     )
 

@@ -30,6 +30,7 @@ from isaaclab.utils.math import (
     wrap_to_pi,
 )
 
+from .contact_metrics import vertical_contact_mask
 from .foothold_prediction import (
     FootholdPredictorCfg,
     FootholdPredictorTrainer,
@@ -40,6 +41,7 @@ from .foothold_prediction import (
     normalize_foothold_support_cfg,
 )
 from .terrain_family import (
+    DISCRETE_FAMILY_ID,
     FOOTHOLD_GUIDANCE_FAMILY_IDS,
     STAIRS_DOWN_FAMILY_ID,
     STAIRS_UP_FAMILY_ID,
@@ -57,7 +59,7 @@ _TEACHER_FLAT_DIM = 6
 _BASE_FRAME_DIM = 9
 _HORIZON_BIN_EDGES = (4, 8, 16)
 _HORIZON_BIN_NAMES = ("h0_3", "h4_7", "h8_15", "h16p")
-_FAMILY_BIN_NAMES = ("stairs_down", "stairs_up")
+_FAMILY_BIN_NAMES = ("discrete", "stairs_down", "stairs_up")
 # Per-bin: count, xy_se, x_sum, y_sum, x_se, y_se.
 _DIAG_STAT_DIM = 6
 
@@ -103,6 +105,9 @@ class FootholdImaginationManager:
         self._pending_frames: torch.Tensor | None = None
         self._pending_counts = torch.zeros(self.num_envs, 2, dtype=torch.long, device=self.device)
         self._pending_write = torch.zeros(self.num_envs, 2, dtype=torch.long, device=self.device)
+        self._pending_contact_seen = torch.zeros(
+            self.num_envs, 2, dtype=torch.bool, device=self.device
+        )
         self._contact_support_stats = torch.zeros(2, dtype=torch.float64, device=self.device)
         self._guidance_reward_stats = torch.zeros(2, dtype=torch.float64, device=self.device)
         # deficiency sum/count, eval-sigma sum/count, horizon-weight sum.
@@ -234,13 +239,13 @@ class FootholdImaginationManager:
         )
         return pos_b[..., :2], wrap_to_pi(_yaw_from_quat(rel_quat))
 
-    def _stairs_active(self) -> torch.Tensor:
+    def _foothold_active(self) -> torch.Tensor:
         return self._terrain_ready_mask & _family_is_foothold_active(
             get_terrain_family_ids(self.env)
         )
 
-    def stairs_active_mask(self) -> torch.Tensor:
-        return self._stairs_active()
+    def foothold_active_mask(self) -> torch.Tensor:
+        return self._foothold_active()
 
     def _guidance_horizon_weight(self, elapsed_steps: torch.Tensor) -> torch.Tensor:
         """Early-swing weight: action can still change the landing.
@@ -296,10 +301,13 @@ class FootholdImaginationManager:
         self._build_trainer(predictor_input.shape[-1])
 
         base_frame = self._base_frame_snapshot()
-        self._swing_at_prepare = ~self._in_contact_like_feet_at_plane()
-        active = self._stairs_active()
+        in_contact = self._in_contact_like_feet_at_plane()
+        self._clear_finished_invalid_contacts(in_contact)
+        self._swing_at_prepare = ~in_contact
+        active = self._foothold_active()
         self._pending_counts[~active] = 0
         self._pending_write[~active] = 0
+        self._pending_contact_seen[~active] = False
 
         if self._step_counter % max(self.cfg.pending_sample_stride, 1) == 0:
             max_pending = int(self.cfg.max_pending_steps)
@@ -325,27 +333,38 @@ class FootholdImaginationManager:
         self._prepared = True
         self._step_counter += 1
 
-    def _record_contact_support(self, events: torch.Tensor, foot_pos_w: torch.Tensor) -> None:
+    def _clear_finished_invalid_contacts(self, in_contact: torch.Tensor) -> None:
+        """Discard swing samples after a rejected contact ends."""
+        finished = self._pending_contact_seen & ~in_contact
+        self._pending_counts[finished] = 0
+        self._pending_write[finished] = 0
+        self._pending_contact_seen[finished] = False
+
+    def _contact_support_ratios(
+        self,
+        events: torch.Tensor,
+        foot_pos_w: torch.Tensor,
+        enable_terrain_foot_weights: bool = True,
+        stairs_weight_min: float = 0.1,
+        stairs_weight_max: float = 1.0,
+    ) -> torch.Tensor:
+        """Evaluate support for environment-foot contact pairs."""
         if events.numel() == 0:
-            return
+            return torch.zeros(0, device=self.device)
         env_ids = events[:, 0]
         foot_ids = events[:, 1]
-        valid = self._stairs_active()[env_ids]
-        env_ids = env_ids[valid]
-        foot_ids = foot_ids[valid]
-        if env_ids.numel() == 0:
-            return
         foot_yaws = _yaw_from_quat(self._robot.data.body_quat_w[:, self._foot_body_ids])[
             env_ids, foot_ids
         ]
-        support_ratios = self._support_evaluator.contact_support_ratio(
+        return self._support_evaluator.contact_support_ratio(
             foot_pos_w[env_ids, foot_ids],
             foot_yaws,
             foot_ids,
             family_ids=get_terrain_family_ids(self.env)[env_ids],
+            enable_terrain_foot_weights=enable_terrain_foot_weights,
+            stairs_weight_min=stairs_weight_min,
+            stairs_weight_max=stairs_weight_max,
         )
-        self._contact_support_stats[0] += support_ratios.double().sum()
-        self._contact_support_stats[1] += support_ratios.numel()
 
     def _label_touchdowns(self, events: torch.Tensor, foot_pos_w: torch.Tensor) -> None:
         event_env_ids = events[:, 0]
@@ -398,6 +417,7 @@ class FootholdImaginationManager:
             targets[sample_mask],
             replay_foot_ids[sample_mask],
             steps_to_contact.expand_as(sample_mask)[sample_mask],
+            family_ids.unsqueeze(1).expand_as(sample_mask)[sample_mask],
         )
 
     def _horizon_bin_ids(self, steps_to_contact: torch.Tensor) -> torch.Tensor:
@@ -443,8 +463,9 @@ class FootholdImaginationManager:
             self._horizon_diag_stats, self._horizon_bin_ids(steps_to_contact), xy_err
         )
         family_bins = torch.full_like(family_ids, -1)
-        family_bins = torch.where(family_ids == STAIRS_DOWN_FAMILY_ID, 0, family_bins)
-        family_bins = torch.where(family_ids == STAIRS_UP_FAMILY_ID, 1, family_bins)
+        family_bins = torch.where(family_ids == DISCRETE_FAMILY_ID, 0, family_bins)
+        family_bins = torch.where(family_ids == STAIRS_DOWN_FAMILY_ID, 1, family_bins)
+        family_bins = torch.where(family_ids == STAIRS_UP_FAMILY_ID, 2, family_bins)
         self._accumulate_diag_stats(self._family_diag_stats, family_bins, xy_err)
 
     def _diag_logs_from_stats(
@@ -462,22 +483,72 @@ class FootholdImaginationManager:
             logs[f"{prefix}/{name}/y_rmse_m"] = (stats[bin_id, 5].item() / count) ** 0.5
         return logs
 
-    def _finalize_contacts(self) -> None:
+    def _finalize_contacts(
+        self,
+        enable_terrain_foot_weights: bool = True,
+        stairs_weight_min: float = 0.1,
+        stairs_weight_max: float = 1.0,
+    ) -> None:
         first_contact = self._contact_sensor.compute_first_contact(self.env.step_dt)[
             :, self._contact_body_ids
         ]
         foot_pos_w = self._robot.data.body_pos_w[:, self._foot_body_ids]
-        events = first_contact.nonzero(as_tuple=False)
-        self._record_contact_support(events, foot_pos_w)
-        if events.numel() > 0:
-            self._label_touchdowns(events, foot_pos_w)
-            self._pending_counts[events[:, 0], events[:, 1]] = 0
-            self._pending_write[events[:, 0], events[:, 1]] = 0
+        first_events = first_contact.nonzero(as_tuple=False)
+        if first_events.numel() > 0:
+            first_events = first_events[self._foothold_active()[first_events[:, 0]]]
 
         in_contact = self._in_contact_like_feet_at_plane()
-        stale = in_contact & (~first_contact) & (self._pending_counts > 0)
-        self._pending_counts[stale] = 0
-        self._pending_write[stale] = 0
+        pending_events = ((self._pending_counts > 0) & in_contact).nonzero(
+            as_tuple=False
+        )
+        if pending_events.numel() > 0:
+            self._pending_contact_seen[
+                pending_events[:, 0], pending_events[:, 1]
+            ] = True
+        if first_events.numel() == 0 and pending_events.numel() == 0:
+            return
+
+        support_events = torch.unique(
+            torch.cat((first_events, pending_events), dim=0), dim=0
+        )
+        support_ratios = self._contact_support_ratios(
+            support_events,
+            foot_pos_w,
+            enable_terrain_foot_weights=enable_terrain_foot_weights,
+            stairs_weight_min=stairs_weight_min,
+            stairs_weight_max=stairs_weight_max,
+        )
+        support_by_foot = torch.full(
+            (self.num_envs, 2), float("nan"), device=self.device
+        )
+        support_by_foot[support_events[:, 0], support_events[:, 1]] = support_ratios
+
+        if first_events.numel() > 0:
+            first_support = support_by_foot[first_events[:, 0], first_events[:, 1]]
+            self._contact_support_stats[0] += first_support.double().sum()
+            self._contact_support_stats[1] += first_support.numel()
+
+        touchdown_events = pending_events
+        if touchdown_events.numel() > 0:
+            env_ids = touchdown_events[:, 0]
+            foot_ids = touchdown_events[:, 1]
+            forces = self._contact_sensor.data.net_forces_w[:, self._contact_body_ids]
+            vertical_contact = vertical_contact_mask(
+                forces[env_ids, foot_ids],
+                float(self.support_cfg.touchdown_vertical_force_ratio),
+                float(self.support_cfg.touchdown_vertical_force_min),
+            )
+            supported = support_by_foot[env_ids, foot_ids] >= float(
+                self.support_cfg.touchdown_support_ratio_min
+            )
+            touchdown_events = touchdown_events[vertical_contact & supported]
+        if touchdown_events.numel() > 0:
+            self._label_touchdowns(touchdown_events, foot_pos_w)
+            self._pending_counts[touchdown_events[:, 0], touchdown_events[:, 1]] = 0
+            self._pending_write[touchdown_events[:, 0], touchdown_events[:, 1]] = 0
+            self._pending_contact_seen[
+                touchdown_events[:, 0], touchdown_events[:, 1]
+            ] = False
 
     def _in_contact_like_feet_at_plane(self) -> torch.Tensor:
         """Contact mask shared with ``feet_at_plane`` (history peak force > 1 N)."""
@@ -492,7 +563,11 @@ class FootholdImaginationManager:
     ) -> torch.Tensor:
         """Sum of horizon-weighted per-swing-foot expected unsupported fractions."""
         self._ensure_scene_handles()
-        self._finalize_contacts()
+        self._finalize_contacts(
+            enable_terrain_foot_weights=enable_terrain_foot_weights,
+            stairs_weight_min=stairs_weight_min,
+            stairs_weight_max=stairs_weight_max,
+        )
         reward = torch.zeros(self.num_envs, device=self.device)
         if (
             not self._prepared
@@ -507,7 +582,7 @@ class FootholdImaginationManager:
             return reward
 
         family_ids = get_terrain_family_ids(self.env)
-        eligible_env = self._stairs_active() & self._prediction_valid
+        eligible_env = self._foothold_active() & self._prediction_valid
         weighted_deficiency = torch.zeros(self.num_envs, 2, device=self.device)
         swing_pairs = (self._swing_at_prepare & eligible_env.unsqueeze(-1)).nonzero(
             as_tuple=False
@@ -532,6 +607,7 @@ class FootholdImaginationManager:
                 stairs_weight_min=stairs_weight_min,
                 stairs_weight_max=stairs_weight_max,
                 eval_chunk_size=self.cfg.grid.expectation_eval_chunk_size,
+                reduction=self.trainer.grid.expectation_weighting,
             )
             horizon_weight = self._guidance_horizon_weight(
                 self._swing_age_at_prepare[env_ids, foot_ids]
@@ -554,6 +630,7 @@ class FootholdImaginationManager:
             return
         self._pending_counts[env_ids] = 0
         self._pending_write[env_ids] = 0
+        self._pending_contact_seen[env_ids] = False
         self._prediction_valid[env_ids] = False
         self._swing_at_prepare[env_ids] = False
         self._swing_age_at_prepare[env_ids] = 0
@@ -627,7 +704,7 @@ class FootholdImaginationManager:
 
         if contact_count > 0.0:
             metrics["Foothold/Contact/support_ratio"] = contact_support_sum / contact_count
-        # Eligible-stair mean of the reward tensor (stance zeros included).
+        # Eligible-terrain mean of the reward tensor (stance zeros included).
         # Swing-only signal is ``swing_deficiency``; Episode_Reward is further diluted.
         metrics["Foothold/Guidance/reward"] = (
             guidance_reward_sum / guidance_reward_count if guidance_reward_count > 0.0 else 0.0

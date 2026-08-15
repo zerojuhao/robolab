@@ -25,12 +25,18 @@ KEY_BODY_NAMES = [
 RP1_24DOF_CFG.init_state.pos = (0.0, 0.0, 0.85)
 AMP_NUM_STEPS = 8
 
+# Measured ankle-roll origin to sole contact plane. The support tolerance sits
+# above the 3 cm Perlin amplitude while remaining below the 5 cm minimum stair.
+RP1_SOLE_HEIGHT = 0.045
+RP1_SUPPORT_HEIGHT_TOLERANCE = 0.035
+RP1_SUPPORT_TRANSITION_WIDTH = 0.005
+
 # Shared by feet_volume_points (penetration) and foot height-scan (critic / support).
 # Tune the shoe box here; scan center and size follow x/y bounds.
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
-    x_min=-0.13,
-    x_max=0.15,
-    x_num=29,
+    x_min=-0.12,
+    x_max=0.14,
+    x_num=27,
     y_min=-0.04,
     y_max=0.04,
     y_num=9,
@@ -76,6 +82,14 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
         self.scene.robot = RP1_24DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.feet_volume_points.points_generator = FEET_VOLUME_POINTS_GRID
         self.scene.knee_volume_points.points_generator = KNEE_VOLUME_POINTS_GRID
+        self.rewards.locomotion.feet_at_plane.params.update(
+            {
+                "height_offset": RP1_SOLE_HEIGHT,
+                "height_tolerance": RP1_SUPPORT_HEIGHT_TOLERANCE,
+                "support_transition_width": RP1_SUPPORT_TRANSITION_WIDTH,
+                "enable_terrain_foot_weights": False,
+            }
+        )
         for scanner_cfg in (
             self.scene.left_height_scanner,
             self.scene.right_height_scanner,

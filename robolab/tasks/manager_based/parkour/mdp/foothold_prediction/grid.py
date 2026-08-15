@@ -43,6 +43,13 @@ class FootholdGaussianGeometry:
         self.standard_offsets = torch.stack((xx.reshape(-1), yy.reshape(-1)), dim=-1)
         log_weights = -0.5 * self.standard_offsets.square().sum(dim=-1)
         self.standard_weights = torch.softmax(log_weights, dim=0)
+        weighting = str(getattr(cfg, "expectation_weighting", "max")).lower()
+        if weighting not in ("max", "uniform", "gaussian"):
+            raise ValueError(
+                "expectation_weighting must be 'max', 'uniform', or 'gaussian', "
+                f"got {weighting!r}."
+            )
+        self.expectation_weighting = weighting
 
     def decode_distribution(
         self, raw_distribution: torch.Tensor
@@ -69,7 +76,16 @@ class FootholdGaussianGeometry:
         """Return XY quadrature points ``[..., G, 2]`` and normalized weights ``[..., G]``."""
         points = mean_xy.unsqueeze(-2) + sigma[..., None, None] * self.standard_offsets
         weight_shape = (*mean_xy.shape[:-1], self.standard_weights.shape[0])
-        weights = self.standard_weights.expand(weight_shape)
+        if self.expectation_weighting == "gaussian":
+            weights = self.standard_weights.expand(weight_shape)
+        else:
+            n_points = self.standard_weights.shape[0]
+            weights = torch.full(
+                weight_shape,
+                1.0 / n_points,
+                device=self.device,
+                dtype=self.standard_weights.dtype,
+            )
         return points, weights
 
     def reward_sigma(self, sigma: torch.Tensor) -> torch.Tensor:
