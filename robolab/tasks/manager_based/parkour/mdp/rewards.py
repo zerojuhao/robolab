@@ -17,8 +17,9 @@ from .contact_metrics import horizontal_force_excess
 from .terrain_family import (
     STAIRS_DOWN_FAMILY_ID,
     STAIRS_UP_FAMILY_ID,
+    conservative_support_deficiency,
     get_terrain_family_ids,
-    soft_absolute_clearance_unsupported,
+    highest_plane_support_deficiency,
     terrain_foot_point_weights,
 )
 
@@ -232,8 +233,19 @@ def feet_orientation_contact(
     sensor_cfg: SceneEntityCfg,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     enabled_terrain_family_ids: tuple[int, ...] | None = None,
+    deadzone: float = 0.0,
+    quadratic_scale: float | None = None,
+    max_penalty: float = 4.0,
 ) -> torch.Tensor:
-    """Penalize non-flat contacting feet on the selected terrain families."""
+    """Penalize contacting-foot tilt beyond a deadzone on selected terrains.
+
+    With ``quadratic_scale``, the excess tilt is normalized and squared so rare,
+    severe edge contacts receive substantially more weight than small tilts.
+    """
+    if quadratic_scale is not None and quadratic_scale <= 0.0:
+        raise ValueError(f"quadratic_scale must be positive, got {quadratic_scale}.")
+    if max_penalty <= 0.0:
+        raise ValueError(f"max_penalty must be positive, got {max_penalty}.")
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     left_quat = asset.data.body_quat_w[:, asset_cfg.body_ids[0], :]
@@ -244,10 +256,21 @@ def feet_orientation_contact(
     net_contact_forces = contact_sensor.data.net_forces_w_history
     is_contact = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0] > 1
 
-    penalty = (
-        torch.sum(torch.square(left_projected_gravity[:, :2]), dim=-1) ** 0.5 * is_contact[:, 0]
-        + torch.sum(torch.square(right_projected_gravity[:, :2]), dim=-1) ** 0.5 * is_contact[:, 1]
+    left_tilt = torch.atan2(
+        torch.linalg.vector_norm(left_projected_gravity[:, :2], dim=-1),
+        -left_projected_gravity[:, 2],
     )
+    right_tilt = torch.atan2(
+        torch.linalg.vector_norm(right_projected_gravity[:, :2], dim=-1),
+        -right_projected_gravity[:, 2],
+    )
+    left_excess = torch.relu(left_tilt - float(deadzone))
+    right_excess = torch.relu(right_tilt - float(deadzone))
+    if quadratic_scale is not None:
+        scale = float(quadratic_scale)
+        left_excess = torch.square(left_excess / scale).clamp_max(max_penalty)
+        right_excess = torch.square(right_excess / scale).clamp_max(max_penalty)
+    penalty = left_excess * is_contact[:, 0] + right_excess * is_contact[:, 1]
     if enabled_terrain_family_ids is None:
         return penalty
 
@@ -275,16 +298,16 @@ def feet_at_plane(
     height_tolerance: float = 0.03,
     support_transition_width: float = 0.005,
     enable_terrain_foot_weights: bool = False,
+    max_plane_terrain_family_ids: tuple[int, ...] | None = None,
     stairs_weight_min: float = 0.0,
     stairs_weight_max: float = 1.0,
 ) -> torch.Tensor:
     """Penalize hanging sole mass while feet are in contact.
 
-    Same clearance kernel as imagined foothold support: only points with
-    ``u_i > 0.5`` enter the numerator; the denominator is the full sole weight
-    sum, so more hanging area yields a larger penalty. Terrain heel/toe weights
-    amplify hanging points. Returns the sum of per-foot values in ``[0, 2]``.
-    Pair with a negative reward weight.
+    Selected terrain families use the imagined-guidance highest-plane kernel,
+    which prevents foot pitch from hiding a tread edge. Other families retain
+    ankle-relative clearance to tolerate rough and sloped terrain. Returns the
+    sum of per-foot values in ``[0, 2]``; pair with a negative reward weight.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene.sensors[contact_sensor_cfg.name]
@@ -303,10 +326,14 @@ def feet_at_plane(
     left_foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids[0], 2]
     right_foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids[1], 2]
 
+    family_ids = None
+    if enable_terrain_foot_weights or max_plane_terrain_family_ids is not None:
+        family_ids = get_terrain_family_ids(env)
+
     left_weights = None
     right_weights = None
     if enable_terrain_foot_weights:
-        family_ids = get_terrain_family_ids(env)
+        assert family_ids is not None
         left_weights = terrain_foot_point_weights(
             _height_scanner_local_x(left_sensor, env.device),
             family_ids,
@@ -320,7 +347,7 @@ def feet_at_plane(
             stairs_weight_max,
         )
 
-    left_unsupported = soft_absolute_clearance_unsupported(
+    left_unsupported, _, _ = conservative_support_deficiency(
         left_foot_z.unsqueeze(-1),
         left_heights,
         height_offset=height_offset,
@@ -329,7 +356,7 @@ def feet_at_plane(
         point_weights=left_weights,
         unsupported_only=True,
     )
-    right_unsupported = soft_absolute_clearance_unsupported(
+    right_unsupported, _, _ = conservative_support_deficiency(
         right_foot_z.unsqueeze(-1),
         right_heights,
         height_offset=height_offset,
@@ -338,6 +365,27 @@ def feet_at_plane(
         point_weights=right_weights,
         unsupported_only=True,
     )
+    if max_plane_terrain_family_ids is not None:
+        assert family_ids is not None
+        use_max_plane = torch.zeros_like(family_ids, dtype=torch.bool)
+        for family_id in max_plane_terrain_family_ids:
+            use_max_plane |= family_ids == family_id
+        left_max_plane, _, _ = highest_plane_support_deficiency(
+            left_heights,
+            height_tolerance=height_tolerance,
+            transition_width=support_transition_width,
+            point_weights=left_weights,
+            unsupported_only=True,
+        )
+        right_max_plane, _, _ = highest_plane_support_deficiency(
+            right_heights,
+            height_tolerance=height_tolerance,
+            transition_width=support_transition_width,
+            point_weights=right_weights,
+            unsupported_only=True,
+        )
+        left_unsupported = torch.where(use_max_plane, left_max_plane, left_unsupported)
+        right_unsupported = torch.where(use_max_plane, right_max_plane, right_unsupported)
     return left_unsupported * is_contact[:, 0].float() + right_unsupported * is_contact[
         :, 1
     ].float()

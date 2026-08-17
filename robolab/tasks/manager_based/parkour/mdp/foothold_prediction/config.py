@@ -10,7 +10,7 @@ from isaaclab.utils import configclass
 
 @configclass
 class FootholdGridCfg:
-    """Gaussian foothold distribution bounds and XY quadrature."""
+    """Gaussian foothold distribution bounds and XY/yaw quadrature."""
 
     sigma_min: float = 0.01
     """Lower bound of isotropic XY sigma, in meters."""

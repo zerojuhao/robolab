@@ -11,12 +11,10 @@ from isaaclab.utils.math import quat_apply
 from isaaclab.utils.warp import raycast_mesh
 
 from ..terrain_family import (
-    soft_absolute_clearance_unsupported,
+    highest_plane_support_deficiency,
     terrain_foot_point_weights,
 )
 
-_MISS_PLANE_Z = -1.0e6
-_VALID_PLANE_MIN = -1.0e5
 _LEGACY_SUPPORT_KEYS = (
     "reward_sigma",
     "disable_slope_family",
@@ -104,19 +102,6 @@ class FootholdSupportEvaluator:
         offset_y_w = sin_foot * offsets[..., 0] + cos_foot * offsets[..., 1]
         return torch.stack((offset_x_w, offset_y_w), dim=-1)
 
-    def _support_plane_from_heights(self, heights: torch.Tensor) -> torch.Tensor:
-        """Highest finite terrain under the sole.
-
-        Clearance is relative to this plane, so a foot half on a tread and half
-        over the drop scores as hanging. Snapping to the origin ray hid that
-        case whenever the sample center was already off the tread.
-        """
-        return torch.where(
-            torch.isfinite(heights),
-            heights,
-            torch.full_like(heights, _MISS_PLANE_Z),
-        ).max(dim=-1).values
-
     def _sole_terrain_point_weights(
         self,
         foot_ids: torch.Tensor,
@@ -143,13 +128,13 @@ class FootholdSupportEvaluator:
         self,
         xy_b: torch.Tensor,
         base_frames: torch.Tensor,
-        foot_yaws: torch.Tensor,
+        foot_yaw: torch.Tensor,
         env_ids: torch.Tensor,
         foot_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Raycast sole heights at predicted body-frame XY.
 
-        ``foot_yaws`` is world yaw with shape ``[num_envs, 2]``.
+        ``foot_yaw`` is world yaw aligned with ``xy_b``.
         ``base_frames`` is ``[N, 9]``: root pos, root quat, per-foot body z.
         """
         frames = base_frames[env_ids]
@@ -157,7 +142,6 @@ class FootholdSupportEvaluator:
             raise ValueError(
                 f"Expected base frame last dim {_BASE_FRAME_DIM}, got {frames.shape[-1]}."
             )
-        foot_yaw = foot_yaws[env_ids, foot_ids]
         root_pos = frames[:, :3]
         root_quat = frames[:, 3:7]
         foot_z_b = torch.where(foot_ids == 0, frames[:, 7], frames[:, 8])
@@ -204,28 +188,51 @@ class FootholdSupportEvaluator:
         )
         return ray_hits[..., 2]
 
-    def _unsupported_from_heights(
+    def _unsupported_components_from_heights(
         self,
         heights: torch.Tensor,
         point_w: torch.Tensor | None,
-    ) -> torch.Tensor:
-        """Hanging fraction relative to the highest finite point under the sole."""
-        support_plane = self._support_plane_from_heights(heights)
-        plane_ok = torch.isfinite(support_plane) & (support_plane > _VALID_PLANE_MIN)
-        foot_z = support_plane.unsqueeze(-1)
-        deficiency = soft_absolute_clearance_unsupported(
-            foot_z,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Conservative, area, and terrain deficiencies at the highest support plane."""
+        deficiencies = highest_plane_support_deficiency(
             heights,
-            height_offset=0.0,
             height_tolerance=self.cfg.height_tolerance,
             transition_width=self.cfg.support_transition_width,
             point_weights=point_w,
             unsupported_only=True,
         )
-        deficiency = torch.nan_to_num(
-            deficiency, nan=1.0, posinf=1.0, neginf=1.0
-        ).clamp(0.0, 1.0)
-        return torch.where(plane_ok, deficiency, torch.ones_like(deficiency))
+        return tuple(
+            torch.nan_to_num(value, nan=1.0, posinf=1.0, neginf=1.0).clamp(0.0, 1.0)
+            for value in deficiencies
+        )
+
+    def _unsupported_from_heights(
+        self,
+        heights: torch.Tensor,
+        point_w: torch.Tensor | None,
+    ) -> torch.Tensor:
+        return self._unsupported_components_from_heights(heights, point_w)[0]
+
+    def contact_support_components(
+        self,
+        foot_pos_w: torch.Tensor,
+        foot_yaws: torch.Tensor,
+        foot_ids: torch.Tensor,
+        family_ids: torch.Tensor | None = None,
+        enable_terrain_foot_weights: bool = True,
+        stairs_weight_min: float = 0.1,
+        stairs_weight_max: float = 1.0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return conservative, area, and terrain-weighted support ratios."""
+        point_w = None
+        if enable_terrain_foot_weights and family_ids is not None:
+            point_w = self._sole_terrain_point_weights(
+                foot_ids, family_ids, stairs_weight_min, stairs_weight_max
+            )
+        deficiencies = self._unsupported_components_from_heights(
+            self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids), point_w
+        )
+        return tuple(1.0 - _finite_or_zero(value) for value in deficiencies)
 
     def contact_support_ratio(
         self,
@@ -238,22 +245,21 @@ class FootholdSupportEvaluator:
         stairs_weight_max: float = 1.0,
     ) -> torch.Tensor:
         """Supported sole fraction at a real contact, same kernel as imagined guidance."""
-        point_w = None
-        if enable_terrain_foot_weights and family_ids is not None:
-            point_w = self._sole_terrain_point_weights(
-                foot_ids, family_ids, stairs_weight_min, stairs_weight_max
-            )
-        unsupported = self._unsupported_from_heights(
-            self._contact_terrain_heights(foot_pos_w, foot_yaws, foot_ids),
-            point_w,
-        )
-        return 1.0 - _finite_or_zero(unsupported)
+        return self.contact_support_components(
+            foot_pos_w,
+            foot_yaws,
+            foot_ids,
+            family_ids,
+            enable_terrain_foot_weights,
+            stairs_weight_min,
+            stairs_weight_max,
+        )[0]
 
     def _support_deficiency_for_xy(
         self,
         xy_b: torch.Tensor,
         base_frames: torch.Tensor,
-        foot_yaws: torch.Tensor,
+        foot_yaw: torch.Tensor,
         env_ids: torch.Tensor,
         foot_ids: torch.Tensor,
         family_ids: torch.Tensor | None = None,
@@ -262,7 +268,7 @@ class FootholdSupportEvaluator:
         stairs_weight_max: float = 1.0,
     ) -> torch.Tensor:
         xy_w, foot_yaw, heights = self._geometry_from_xy_b(
-            xy_b, base_frames, foot_yaws, env_ids, foot_ids
+            xy_b, base_frames, foot_yaw, env_ids, foot_ids
         )
         point_w = None
         if enable_terrain_foot_weights and family_ids is not None:
@@ -292,11 +298,13 @@ class FootholdSupportEvaluator:
         stairs_weight_max: float = 1.0,
         eval_chunk_size: int = 64,
         reduction: str = "mean",
+        candidate_yaws_w: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Unsupported fraction over XY quadrature samples.
 
         ``candidate_xy_b`` is ``[P, G, 2]`` and ``candidate_weights`` is ``[P, G]``.
-        ``foot_yaws`` is predicted world yaw ``[num_envs, 2]``.
+        ``foot_yaws`` is predicted mean world yaw ``[num_envs, 2]``.
+        ``candidate_yaws_w`` optionally supplies yaw quadrature ``[P, G]``.
         ``reduction`` is ``max`` (worst sample) or ``mean`` (weighted average).
         """
         num_pairs, num_candidates = candidate_weights.shape
@@ -306,6 +314,11 @@ class FootholdSupportEvaluator:
             raise ValueError(
                 "candidate_xy_b must have shape [P, G, 2] matching candidate_weights."
             )
+        if candidate_yaws_w is not None and candidate_yaws_w.shape != (
+            num_pairs,
+            num_candidates,
+        ):
+            raise ValueError("candidate_yaws_w must have shape [P, G].")
         reduce_max = str(reduction).lower() == "max"
         weights = torch.nan_to_num(
             candidate_weights, nan=0.0, posinf=0.0, neginf=0.0
@@ -321,10 +334,15 @@ class FootholdSupportEvaluator:
             flat_xy = candidate_xy_b[start:end].reshape(-1, 2)
             flat_env_ids = chunk_env_ids[:, None].expand(-1, num_candidates).reshape(-1)
             flat_foot_ids = chunk_foot_ids[:, None].expand(-1, num_candidates).reshape(-1)
+            if candidate_yaws_w is None:
+                chunk_yaws = foot_yaws[chunk_env_ids, chunk_foot_ids]
+                flat_yaws = chunk_yaws[:, None].expand(-1, num_candidates).reshape(-1)
+            else:
+                flat_yaws = candidate_yaws_w[start:end].reshape(-1)
             flat_deficiency = self._support_deficiency_for_xy(
                 flat_xy,
                 base_frames,
-                foot_yaws,
+                flat_yaws,
                 flat_env_ids,
                 flat_foot_ids,
                 family_ids=family_ids,

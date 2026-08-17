@@ -25,10 +25,10 @@ KEY_BODY_NAMES = [
 RP1_24DOF_CFG.init_state.pos = (0.0, 0.0, 0.85)
 AMP_NUM_STEPS = 8
 
-# Measured ankle-roll origin to sole contact plane. The support tolerance sits
-# above the 3 cm Perlin amplitude while remaining below the 5 cm minimum stair.
+# Measured ankle-roll origin to sole contact plane. The support tolerance covers
+# the 3 cm Perlin amplitude while remaining below the 5 cm minimum stair.
 RP1_SOLE_HEIGHT = 0.045
-RP1_SUPPORT_HEIGHT_TOLERANCE = 0.035
+RP1_SUPPORT_HEIGHT_TOLERANCE = 0.030
 RP1_SUPPORT_TRANSITION_WIDTH = 0.005
 
 # Shared by feet_volume_points (penetration) and foot height-scan (critic / support).
@@ -87,7 +87,7 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
                 "height_offset": RP1_SOLE_HEIGHT,
                 "height_tolerance": RP1_SUPPORT_HEIGHT_TOLERANCE,
                 "support_transition_width": RP1_SUPPORT_TRANSITION_WIDTH,
-                "enable_terrain_foot_weights": False,
+                "enable_terrain_foot_weights": True,
             }
         )
         for scanner_cfg in (

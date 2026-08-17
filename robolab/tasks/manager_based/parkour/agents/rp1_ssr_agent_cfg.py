@@ -63,7 +63,7 @@ class RslRlPpoEncoderMoEActorMultiCriticCfg:
 class RslRlMultiRewardPpoAmpAlgorithmCfg(RslRlPpoAmpAlgorithmCfg):
     class_name: str = "MultiRewardPPOAMP"
     num_reward_heads: int = 3
-    advantage_weights: list[float] = [1.0, 0.8, 0.2]
+    advantage_weights: list[float] = [1.0, 0.3, 0.3]
     reward_head_names: list[str] = ["locomotion", "foothold", "style"]
     enable_aux_loss: bool = True
     aux_loss_coef: float = 1.0
@@ -127,7 +127,7 @@ class RP1SSRAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.005,
+        entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=1.0e-4,

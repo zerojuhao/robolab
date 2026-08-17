@@ -10,10 +10,7 @@ wrap_angle = wrap_to_pi
 
 
 class FootholdGaussianGeometry:
-    """Decode per-foot ``(μ_xy, μ_yaw, σ_xy, σ_yaw)`` and sample XY expectations.
-
-    Yaw uses the predicted mean; support quadrature is XY-only.
-    """
+    """Decode foothold distributions and sample XY/yaw expectations."""
 
     def __init__(self, cfg, device: torch.device | str) -> None:
         self.cfg = cfg
@@ -43,6 +40,10 @@ class FootholdGaussianGeometry:
         self.standard_offsets = torch.stack((xx.reshape(-1), yy.reshape(-1)), dim=-1)
         log_weights = -0.5 * self.standard_offsets.square().sum(dim=-1)
         self.standard_weights = torch.softmax(log_weights, dim=0)
+        self.standard_yaw_offsets = torch.tensor([-1.0, 0.0, 1.0], device=device)
+        self.standard_yaw_weights = torch.softmax(
+            -0.5 * self.standard_yaw_offsets.square(), dim=0
+        )
         weighting = str(getattr(cfg, "expectation_weighting", "max")).lower()
         if weighting not in ("max", "uniform", "gaussian"):
             raise ValueError(
@@ -94,6 +95,31 @@ class FootholdGaussianGeometry:
         if floor <= 0.0:
             return sigma
         return sigma.clamp(min=floor)
+
+    def expectation_poses(
+        self,
+        mean_xy: torch.Tensor,
+        sigma_xy: torch.Tensor,
+        mean_yaw: torch.Tensor,
+        sigma_yaw: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return Cartesian-product XY/yaw quadrature and normalized weights."""
+        xy, xy_weights = self.expectation_points(mean_xy, sigma_xy)
+        yaw = wrap_to_pi(
+            mean_yaw.unsqueeze(-1)
+            + sigma_yaw.unsqueeze(-1) * self.standard_yaw_offsets
+        )
+        yaw_weights = self.standard_yaw_weights.expand_as(yaw)
+        num_xy = xy.shape[-2]
+        num_yaw = yaw.shape[-1]
+        poses_xy = xy.unsqueeze(-2).expand(*xy.shape[:-2], num_xy, num_yaw, 2)
+        poses_yaw = yaw.unsqueeze(-2).expand(*yaw.shape[:-1], num_xy, num_yaw)
+        weights = xy_weights.unsqueeze(-1) * yaw_weights.unsqueeze(-2)
+        return (
+            poses_xy.reshape(*xy.shape[:-2], num_xy * num_yaw, 2),
+            poses_yaw.reshape(*yaw.shape[:-1], num_xy * num_yaw),
+            weights.reshape(*weights.shape[:-2], num_xy * num_yaw),
+        )
 
     @property
     def signature(self) -> tuple:

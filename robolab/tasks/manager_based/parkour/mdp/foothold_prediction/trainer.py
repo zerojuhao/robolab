@@ -92,13 +92,13 @@ class FootholdPredictorTrainer:
     @torch.no_grad()
     def predict(
         self, predictor_input: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return mean XY ``[N,2,2]``, mean yaw ``[N,2]``, and XY sigma ``[N,2]``."""
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return means and standard deviations for XY and yaw."""
         self.ema_model.eval()
-        mean_xy, mean_yaw, sigma_xy, _sigma_yaw = self.grid.decode_distribution(
+        mean_xy, mean_yaw, sigma_xy, sigma_yaw = self.grid.decode_distribution(
             self.ema_model(self.input_normalizer(predictor_input))
         )
-        return mean_xy, mean_yaw, sigma_xy
+        return mean_xy, mean_yaw, sigma_xy, sigma_yaw
 
     def _horizon_nll_weight(self, steps_to_contact: torch.Tensor) -> torch.Tensor:
         """Per-sample NLL weight. ``nll_horizon_tau <= 0`` is uniform (far = near)."""

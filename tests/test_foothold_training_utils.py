@@ -66,15 +66,38 @@ def test_rp1_support_clearance_separates_perlin_noise_from_stair_drop():
         ankle_height,
         terrain_heights,
         height_offset=0.045,
-        height_tolerance=0.035,
+        height_tolerance=0.030,
         transition_width=0.005,
         unsupported_only=True,
     )
 
     # Flat ground and the 3 cm Perlin envelope stay inside the support band;
     # the 5 cm stair drop remains clearly unsupported.
-    expected_stair_deficiency = torch.sigmoid(torch.tensor(3.0)) / 3.0
+    expected_stair_deficiency = torch.sigmoid(torch.tensor(4.0)) / 3.0
     torch.testing.assert_close(unsupported, expected_stair_deficiency.unsqueeze(0))
+
+
+def test_highest_plane_support_exposes_stair_drop_despite_low_ankle():
+    terrain_heights = torch.tensor([[0.0, 0.0, -0.05, -0.05]])
+    final, area, terrain = terrain_family.highest_plane_support_deficiency(
+        terrain_heights,
+        height_tolerance=0.030,
+        transition_width=0.005,
+        unsupported_only=True,
+    )
+
+    expected = torch.sigmoid(torch.tensor(4.0)) / 2.0
+    torch.testing.assert_close(final, expected.unsqueeze(0))
+    torch.testing.assert_close(area, final)
+    torch.testing.assert_close(terrain, final)
+
+
+def test_highest_plane_support_rejects_missing_terrain():
+    deficiencies = terrain_family.highest_plane_support_deficiency(
+        torch.full((1, 4), torch.inf), unsupported_only=True
+    )
+    for value in deficiencies:
+        torch.testing.assert_close(value, torch.ones(1))
 
 
 def test_running_normalization_and_checkpoint_round_trip():
@@ -121,4 +144,32 @@ def test_discrete_terrain_prioritizes_mid_sole_support():
     weights = terrain_family.terrain_foot_point_weights(
         local_x, family_ids, stairs_weight_min=0.1, stairs_weight_max=1.0
     )
-    torch.testing.assert_close(weights, torch.tensor([[0.01, 1.0, 0.01]]))
+    torch.testing.assert_close(weights, torch.tensor([[0.1, 1.0, 0.1]]))
+
+
+def test_non_foothold_terrain_uses_uniform_sole_weights():
+    local_x = torch.tensor([-0.13, 0.0, 0.13])
+    family_ids = torch.tensor(
+        [terrain_family.PERLIN_ROUGH_FAMILY_ID, terrain_family.SLOPE_FAMILY_ID]
+    )
+    weights = terrain_family.terrain_foot_point_weights(
+        local_x, family_ids, stairs_weight_min=0.1, stairs_weight_max=1.0
+    )
+    torch.testing.assert_close(weights, torch.ones(2, 3))
+
+
+def test_direction_weights_cannot_hide_unsupported_area():
+    foot_z = torch.tensor([[0.0]])
+    terrain_z = torch.tensor([[-0.05, 0.0]])
+    point_weights = torch.tensor([[0.1, 1.0]])
+    final, area, terrain = terrain_family.conservative_support_deficiency(
+        foot_z,
+        terrain_z,
+        height_offset=0.0,
+        height_tolerance=0.035,
+        transition_width=0.005,
+        point_weights=point_weights,
+        unsupported_only=True,
+    )
+    assert terrain.item() < area.item()
+    torch.testing.assert_close(final, area)

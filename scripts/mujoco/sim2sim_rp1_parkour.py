@@ -94,13 +94,13 @@ _CHASE_UP_M = 0.6
 _CHASE_LOOK_AHEAD_M = 0.8
 _CHASE_BODY_NAME = "base_link"
 # Deployment velocity limits (min, max) per axis: vx, vy, dyaw.
-_CLIP_CMD_X = (-0.6, 0.8)
+_CLIP_CMD_X = (-0.6, 0.6)
 _CLIP_CMD_Y = (-0.6, 0.6)
 _CLIP_CMD_Z = (-1.0, 1.0)
 
 
 class CompactOverlayMujocoViewer(mujoco_viewer.MujocoViewer):
-    """MujocoViewer with the default left-side overlay hidden."""
+    """MujocoViewer with compact overlay and MuJoCo 3.3+ double-click select fix."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -141,6 +141,100 @@ class CompactOverlayMujocoViewer(mujoco_viewer.MujocoViewer):
             for sign_x, value_x, value in zip(col_sign_x, col_value_x, values):
                 draw("+" if value >= 0.0 else "-", sign_x, row_y)
                 draw(f"{abs(value):.2f}", value_x, row_y)
+
+    def _mouse_button_callback(self, window, button, act, mods):
+        """Same as mujoco_viewer, but skinselect must be int (MuJoCo 3.3+)."""
+        self._button_left_pressed = button == glfw.MOUSE_BUTTON_LEFT and act == glfw.PRESS
+        self._button_right_pressed = button == glfw.MOUSE_BUTTON_RIGHT and act == glfw.PRESS
+
+        x, y = glfw.get_cursor_pos(window)
+        self._last_mouse_x = int(self._scale * x)
+        self._last_mouse_y = int(self._scale * y)
+
+        self._left_double_click_pressed = False
+        self._right_double_click_pressed = False
+        time_now = glfw.get_time()
+
+        if self._button_left_pressed:
+            if self._last_left_click_time is None:
+                self._last_left_click_time = glfw.get_time()
+            time_diff = time_now - self._last_left_click_time
+            if time_diff > 0.01 and time_diff < 0.3:
+                self._left_double_click_pressed = True
+            self._last_left_click_time = time_now
+
+        if self._button_right_pressed:
+            if self._last_right_click_time is None:
+                self._last_right_click_time = glfw.get_time()
+            time_diff = time_now - self._last_right_click_time
+            if time_diff > 0.01 and time_diff < 0.2:
+                self._right_double_click_pressed = True
+            self._last_right_click_time = time_now
+
+        key = mods == glfw.MOD_CONTROL
+        newperturb = 0
+        if key and self.pert.select > 0:
+            if self._button_right_pressed:
+                newperturb = mujoco.mjtPertBit.mjPERT_TRANSLATE
+            if self._button_left_pressed:
+                newperturb = mujoco.mjtPertBit.mjPERT_ROTATE
+            if newperturb and not self.pert.active:
+                mujoco.mjv_initPerturb(self.model, self.data, self.scn, self.pert)
+        self.pert.active = newperturb
+
+        if self._left_double_click_pressed or self._right_double_click_pressed:
+            selmode = 0
+            if self._left_double_click_pressed:
+                selmode = 1
+            if self._right_double_click_pressed:
+                selmode = 2
+            if self._right_double_click_pressed and key:
+                selmode = 3
+
+            width, height = self.viewport.width, self.viewport.height
+            aspectratio = width / height
+            relx = x / width
+            rely = (self.viewport.height - y) / height
+            selpnt = np.zeros((3, 1), dtype=np.float64)
+            selgeom = np.zeros((1, 1), dtype=np.int32)
+            selflex = np.zeros((1, 1), dtype=np.int32)
+            selskin = np.zeros((1, 1), dtype=np.int32)
+
+            selbody = mujoco.mjv_select(
+                self.model,
+                self.data,
+                self.vopt,
+                aspectratio,
+                relx,
+                rely,
+                self.scn,
+                selpnt,
+                selgeom,
+                selflex,
+                selskin,
+            )
+
+            if selmode == 2 or selmode == 3:
+                if selbody >= 0:
+                    self.cam.lookat = selpnt.flatten()
+                if selmode == 3 and selbody > 0:
+                    self.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+                    self.cam.trackbodyid = selbody
+                    self.cam.fixedcamid = -1
+            else:
+                if selbody >= 0:
+                    self.pert.select = int(selbody)
+                    # mjv_select writes into ndarray out-args; MjvPerturb fields need scalars.
+                    self.pert.skinselect = int(np.asarray(selskin).flat[0])
+                    vec = selpnt.flatten() - self.data.xpos[selbody]
+                    self.pert.localpos = self.data.xmat[selbody].reshape(3, 3).dot(vec)
+                else:
+                    self.pert.select = 0
+                    self.pert.skinselect = -1
+            self.pert.active = 0
+
+        if act == glfw.RELEASE:
+            self.pert.active = 0
 
     def render(self):
         if self.render_mode == "offscreen":
@@ -1173,10 +1267,9 @@ def run_mujoco_onnx(
     if depth_renderer is not None and hasattr(depth_renderer, "close"):
         depth_renderer.close()
     if headless:
-        if renderer is not None and hasattr(renderer, "close"):
+        if hasattr(renderer, "close"):
             renderer.close()
-        if out is not None:
-            out.release()
+        out.release()
     else:
         if show_depth_vis:
             cv2.destroyAllWindows()
@@ -1227,12 +1320,10 @@ def run_mujoco_onnx(
     plt.tight_layout()
     fig2.savefig("base_velocities_parkour.png")
     print("Saved joint_positions_parkour.png, base_velocities_parkour.png")
-    if headless and out is not None:
-        print(f"[INFO] Video saved: {video_path}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + policy_parkour.onnx).")
+    parser = argparse.ArgumentParser(description="RP1 parkour sim2sim (depth_encoder.onnx + actor.onnx).")
     default_export = (
         "rp1e0"
     )
@@ -1245,7 +1336,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--actor",
         type=str,
-        default=f"{default_export}/policy_parkour.onnx",
+        default=f"{default_export}/policy_ssr.onnx",
         help="Path to actor ONNX (includes obs normalizer if exported with normalization).",
     )
     parser.add_argument(

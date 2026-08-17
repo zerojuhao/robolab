@@ -3,7 +3,7 @@
 The privileged teacher consumes the critic observation group plus the current
 action and predicts the next contact XY and relative landing yaw for both feet.
 Labels use the same full-root-quaternion body frame as the foothold targets.
-Training, prediction, reward, and contact logs are stairs-only.
+Training, prediction, reward, and contact logs cover discrete footholds and stairs.
 
 Locomotion ``feet_at_plane`` penalizes currently unsupported stance. This module
 pre-penalizes the teacher-expected unsupported fraction of feet that were swinging
@@ -62,6 +62,10 @@ _HORIZON_BIN_NAMES = ("h0_3", "h4_7", "h8_15", "h16p")
 _FAMILY_BIN_NAMES = ("discrete", "stairs_down", "stairs_up")
 # Per-bin: count, xy_se, x_sum, y_sum, x_se, y_se.
 _DIAG_STAT_DIM = 6
+_SUPPORT_HIST_BINS = 20
+_TILT_HIST_BINS = 18
+# Count, final/area/terrain sums, below-threshold count, tilt sum, then histograms.
+_CONTACT_STAT_DIM = 6 + _SUPPORT_HIST_BINS + _TILT_HIST_BINS
 
 
 def _family_is_foothold_active(family_ids: torch.Tensor) -> torch.Tensor:
@@ -108,7 +112,13 @@ class FootholdImaginationManager:
         self._pending_contact_seen = torch.zeros(
             self.num_envs, 2, dtype=torch.bool, device=self.device
         )
-        self._contact_support_stats = torch.zeros(2, dtype=torch.float64, device=self.device)
+        self._contact_support_stats = torch.zeros(
+            len(_FAMILY_BIN_NAMES), _CONTACT_STAT_DIM, dtype=torch.float64, device=self.device
+        )
+        # Pending, rejected vertical force, rejected support, accepted.
+        self._touchdown_filter_stats = torch.zeros(
+            len(_FAMILY_BIN_NAMES), 4, dtype=torch.float64, device=self.device
+        )
         self._guidance_reward_stats = torch.zeros(2, dtype=torch.float64, device=self.device)
         # deficiency sum/count, eval-sigma sum/count, horizon-weight sum.
         self._swing_guidance_stats = torch.zeros(5, dtype=torch.float64, device=self.device)
@@ -130,6 +140,7 @@ class FootholdImaginationManager:
         self._latest_yaw_b: torch.Tensor | None = None
         self._latest_yaw_w: torch.Tensor | None = None
         self._latest_sigma: torch.Tensor | None = None
+        self._latest_yaw_sigma: torch.Tensor | None = None
         self._latest_base_frame: torch.Tensor | None = None
         self._prepared = False
         self._step_counter = 0
@@ -271,12 +282,14 @@ class FootholdImaginationManager:
         mean_xy: torch.Tensor,
         mean_yaw: torch.Tensor,
         sigma_xy: torch.Tensor,
+        sigma_yaw: torch.Tensor,
         base_frame: torch.Tensor,
         active: torch.Tensor,
     ) -> None:
         self._latest_mu_b = mean_xy
         self._latest_yaw_b = mean_yaw
         self._latest_sigma = sigma_xy
+        self._latest_yaw_sigma = sigma_yaw
         self._latest_base_frame = base_frame
         zeros = torch.zeros_like(mean_yaw)
         rel_quat = quat_from_euler_xyz(zeros, zeros, mean_yaw)
@@ -290,6 +303,7 @@ class FootholdImaginationManager:
         self._latest_yaw_b[inactive] = 0
         self._latest_yaw_w[inactive] = 0
         self._latest_sigma[inactive] = 0
+        self._latest_yaw_sigma[inactive] = 0
         self._latest_mu_flat[inactive] = float("nan")
 
     def prepare_step(self, privileged_state: torch.Tensor, action: torch.Tensor) -> None:
@@ -327,8 +341,8 @@ class FootholdImaginationManager:
                     self._pending_counts[env_ids, foot_id] + 1, max=max_pending
                 )
 
-        mean_xy, mean_yaw, sigma_xy = self.trainer.predict(predictor_input)
-        self._store_prediction(mean_xy, mean_yaw, sigma_xy, base_frame, active)
+        mean_xy, mean_yaw, sigma_xy, sigma_yaw = self.trainer.predict(predictor_input)
+        self._store_prediction(mean_xy, mean_yaw, sigma_xy, sigma_yaw, base_frame, active)
         self._swing_age_at_prepare.copy_(self._pending_counts)
         self._prepared = True
         self._step_counter += 1
@@ -340,23 +354,24 @@ class FootholdImaginationManager:
         self._pending_write[finished] = 0
         self._pending_contact_seen[finished] = False
 
-    def _contact_support_ratios(
+    def _contact_support_components(
         self,
         events: torch.Tensor,
         foot_pos_w: torch.Tensor,
         enable_terrain_foot_weights: bool = True,
         stairs_weight_min: float = 0.1,
         stairs_weight_max: float = 1.0,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Evaluate support for environment-foot contact pairs."""
         if events.numel() == 0:
-            return torch.zeros(0, device=self.device)
+            empty = torch.zeros(0, device=self.device)
+            return empty, empty, empty
         env_ids = events[:, 0]
         foot_ids = events[:, 1]
         foot_yaws = _yaw_from_quat(self._robot.data.body_quat_w[:, self._foot_body_ids])[
             env_ids, foot_ids
         ]
-        return self._support_evaluator.contact_support_ratio(
+        return self._support_evaluator.contact_support_components(
             foot_pos_w[env_ids, foot_ids],
             foot_yaws,
             foot_ids,
@@ -365,6 +380,66 @@ class FootholdImaginationManager:
             stairs_weight_min=stairs_weight_min,
             stairs_weight_max=stairs_weight_max,
         )
+
+    @staticmethod
+    def _family_bin_ids(family_ids: torch.Tensor) -> torch.Tensor:
+        bins = torch.full_like(family_ids, -1)
+        bins = torch.where(family_ids == DISCRETE_FAMILY_ID, 0, bins)
+        bins = torch.where(family_ids == STAIRS_DOWN_FAMILY_ID, 1, bins)
+        return torch.where(family_ids == STAIRS_UP_FAMILY_ID, 2, bins)
+
+    def _accumulate_contact_support_stats(
+        self,
+        family_ids: torch.Tensor,
+        support: torch.Tensor,
+        area_support: torch.Tensor,
+        terrain_support: torch.Tensor,
+        tilt: torch.Tensor,
+    ) -> None:
+        family_bins = self._family_bin_ids(family_ids)
+        for bin_id in range(len(_FAMILY_BIN_NAMES)):
+            mask = family_bins == bin_id
+            if not mask.any():
+                continue
+            values = support[mask]
+            tilts = tilt[mask]
+            stats = self._contact_support_stats[bin_id]
+            stats[0] += values.numel()
+            stats[1] += values.double().sum()
+            stats[2] += area_support[mask].double().sum()
+            stats[3] += terrain_support[mask].double().sum()
+            stats[4] += (values < self.support_cfg.touchdown_support_ratio_min).double().sum()
+            stats[5] += tilts.double().sum()
+            support_bins = (values.clamp(0.0, 1.0) * _SUPPORT_HIST_BINS).long().clamp_max(
+                _SUPPORT_HIST_BINS - 1
+            )
+            tilt_bins = (
+                tilts.clamp(0.0, 0.5 * torch.pi) / (0.5 * torch.pi) * _TILT_HIST_BINS
+            ).long().clamp_max(_TILT_HIST_BINS - 1)
+            stats[6 : 6 + _SUPPORT_HIST_BINS] += torch.bincount(
+                support_bins, minlength=_SUPPORT_HIST_BINS
+            ).double()
+            stats[6 + _SUPPORT_HIST_BINS :] += torch.bincount(
+                tilt_bins, minlength=_TILT_HIST_BINS
+            ).double()
+
+    def _accumulate_touchdown_filter_stats(
+        self,
+        family_ids: torch.Tensor,
+        vertical_contact: torch.Tensor,
+        supported: torch.Tensor,
+    ) -> None:
+        family_bins = self._family_bin_ids(family_ids)
+        accepted = vertical_contact & supported
+        for bin_id in range(len(_FAMILY_BIN_NAMES)):
+            mask = family_bins == bin_id
+            if not mask.any():
+                continue
+            stats = self._touchdown_filter_stats[bin_id]
+            stats[0] += mask.sum()
+            stats[1] += (mask & ~vertical_contact).sum()
+            stats[2] += (mask & vertical_contact & ~supported).sum()
+            stats[3] += (mask & accepted).sum()
 
     def _label_touchdowns(self, events: torch.Tensor, foot_pos_w: torch.Tensor) -> None:
         event_env_ids = events[:, 0]
@@ -456,7 +531,9 @@ class FootholdImaginationManager:
     ) -> None:
         if inputs.shape[0] == 0 or self.trainer is None:
             return
-        mean_xy, _mean_yaw, _sigma = self.trainer.predict(inputs.to(dtype=torch.float32))
+        mean_xy, _mean_yaw, _sigma, _yaw_sigma = self.trainer.predict(
+            inputs.to(dtype=torch.float32)
+        )
         batch_ids = torch.arange(inputs.shape[0], device=self.device)
         xy_err = mean_xy[batch_ids, foot_ids] - targets[..., :2]
         self._accumulate_diag_stats(
@@ -481,6 +558,65 @@ class FootholdImaginationManager:
             logs[f"{prefix}/{name}/y_bias_m"] = stats[bin_id, 3].item() / count
             logs[f"{prefix}/{name}/x_rmse_m"] = (stats[bin_id, 4].item() / count) ** 0.5
             logs[f"{prefix}/{name}/y_rmse_m"] = (stats[bin_id, 5].item() / count) ** 0.5
+        return logs
+
+    @staticmethod
+    def _histogram_quantile(histogram: torch.Tensor, quantile: float, maximum: float) -> float:
+        count = histogram.sum()
+        if count <= 0:
+            return 0.0
+        bin_id = int(torch.searchsorted(histogram.cumsum(0), count * quantile).item())
+        return (bin_id + 0.5) * maximum / histogram.numel()
+
+    def _contact_logs_from_stats(
+        self, contact_stats: torch.Tensor, filter_stats: torch.Tensor
+    ) -> dict[str, float]:
+        logs: dict[str, float] = {}
+        total_count = float(contact_stats[:, 0].sum().item())
+        if total_count > 0.0:
+            logs["Foothold/Contact/support_ratio"] = (
+                contact_stats[:, 1].sum().item() / total_count
+            )
+            logs["Foothold/Contact/area_support_ratio"] = (
+                contact_stats[:, 2].sum().item() / total_count
+            )
+            logs["Foothold/Contact/terrain_support_ratio"] = (
+                contact_stats[:, 3].sum().item() / total_count
+            )
+            logs["Foothold/Contact/below_threshold_fraction"] = (
+                contact_stats[:, 4].sum().item() / total_count
+            )
+        for bin_id, name in enumerate(_FAMILY_BIN_NAMES):
+            count = float(contact_stats[bin_id, 0].item())
+            if count > 0.0:
+                prefix = f"Foothold/Contact/{name}"
+                logs[f"{prefix}/support_ratio"] = contact_stats[bin_id, 1].item() / count
+                logs[f"{prefix}/area_support_ratio"] = contact_stats[bin_id, 2].item() / count
+                logs[f"{prefix}/terrain_support_ratio"] = contact_stats[bin_id, 3].item() / count
+                logs[f"{prefix}/below_threshold_fraction"] = (
+                    contact_stats[bin_id, 4].item() / count
+                )
+                logs[f"{prefix}/tilt_mean_rad"] = contact_stats[bin_id, 5].item() / count
+                support_hist = contact_stats[
+                    bin_id, 6 : 6 + _SUPPORT_HIST_BINS
+                ]
+                tilt_hist = contact_stats[bin_id, 6 + _SUPPORT_HIST_BINS :]
+                logs[f"{prefix}/support_p10"] = self._histogram_quantile(
+                    support_hist, 0.1, 1.0
+                )
+                logs[f"{prefix}/tilt_p90_rad"] = self._histogram_quantile(
+                    tilt_hist, 0.9, 0.5 * torch.pi
+                )
+            pending = float(filter_stats[bin_id, 0].item())
+            if pending > 0.0:
+                prefix = f"Foothold/Touchdown/{name}"
+                logs[f"{prefix}/rejected_vertical_fraction"] = (
+                    filter_stats[bin_id, 1].item() / pending
+                )
+                logs[f"{prefix}/rejected_support_fraction"] = (
+                    filter_stats[bin_id, 2].item() / pending
+                )
+                logs[f"{prefix}/accepted_fraction"] = filter_stats[bin_id, 3].item() / pending
         return logs
 
     def _finalize_contacts(
@@ -511,7 +647,7 @@ class FootholdImaginationManager:
         support_events = torch.unique(
             torch.cat((first_events, pending_events), dim=0), dim=0
         )
-        support_ratios = self._contact_support_ratios(
+        support_ratios, area_support, terrain_support = self._contact_support_components(
             support_events,
             foot_pos_w,
             enable_terrain_foot_weights=enable_terrain_foot_weights,
@@ -522,11 +658,36 @@ class FootholdImaginationManager:
             (self.num_envs, 2), float("nan"), device=self.device
         )
         support_by_foot[support_events[:, 0], support_events[:, 1]] = support_ratios
+        area_by_foot = torch.full_like(support_by_foot, float("nan"))
+        terrain_by_foot = torch.full_like(support_by_foot, float("nan"))
+        area_by_foot[support_events[:, 0], support_events[:, 1]] = area_support
+        terrain_by_foot[support_events[:, 0], support_events[:, 1]] = terrain_support
 
         if first_events.numel() > 0:
-            first_support = support_by_foot[first_events[:, 0], first_events[:, 1]]
-            self._contact_support_stats[0] += first_support.double().sum()
-            self._contact_support_stats[1] += first_support.numel()
+            first_env_ids = first_events[:, 0]
+            first_foot_ids = first_events[:, 1]
+            foot_quat = self._robot.data.body_quat_w[:, self._foot_body_ids][
+                first_env_ids, first_foot_ids
+            ]
+            gravity_w = self._robot.data.GRAVITY_VEC_W
+            gravity = (
+                gravity_w.expand_as(foot_quat[..., :3])
+                if gravity_w.ndim == 1
+                else gravity_w[first_env_ids]
+            )
+            projected_gravity = quat_apply_inverse(foot_quat, gravity)
+            tilt = torch.atan2(
+                torch.linalg.vector_norm(projected_gravity[..., :2], dim=-1),
+                -projected_gravity[..., 2],
+            )
+            family_ids = get_terrain_family_ids(self.env)[first_env_ids]
+            self._accumulate_contact_support_stats(
+                family_ids,
+                support_by_foot[first_env_ids, first_foot_ids],
+                area_by_foot[first_env_ids, first_foot_ids],
+                terrain_by_foot[first_env_ids, first_foot_ids],
+                tilt,
+            )
 
         touchdown_events = pending_events
         if touchdown_events.numel() > 0:
@@ -540,6 +701,9 @@ class FootholdImaginationManager:
             )
             supported = support_by_foot[env_ids, foot_ids] >= float(
                 self.support_cfg.touchdown_support_ratio_min
+            )
+            self._accumulate_touchdown_filter_stats(
+                get_terrain_family_ids(self.env)[env_ids], vertical_contact, supported
             )
             touchdown_events = touchdown_events[vertical_contact & supported]
         if touchdown_events.numel() > 0:
@@ -575,6 +739,7 @@ class FootholdImaginationManager:
             or self._latest_mu_b is None
             or self._latest_yaw_w is None
             or self._latest_sigma is None
+            or self._latest_yaw_sigma is None
             or not self.trainer.reward_enabled
         ):
             return reward
@@ -591,9 +756,11 @@ class FootholdImaginationManager:
             env_ids = swing_pairs[:, 0]
             foot_ids = swing_pairs[:, 1]
             eval_sigma = self.trainer.grid.reward_sigma(self._latest_sigma[env_ids, foot_ids])
-            candidate_xy, candidate_weights = self.trainer.grid.expectation_points(
+            candidate_xy, candidate_yaws, candidate_weights = self.trainer.grid.expectation_poses(
                 self._latest_mu_b[env_ids, foot_ids],
                 eval_sigma,
+                self._latest_yaw_w[env_ids, foot_ids],
+                self._latest_yaw_sigma[env_ids, foot_ids],
             )
             predicted = self._support_evaluator.expected_support_deficiency(
                 candidate_xy,
@@ -608,6 +775,7 @@ class FootholdImaginationManager:
                 stairs_weight_max=stairs_weight_max,
                 eval_chunk_size=self.cfg.grid.expectation_eval_chunk_size,
                 reduction=self.trainer.grid.expectation_weighting,
+                candidate_yaws_w=candidate_yaws,
             )
             horizon_weight = self._guidance_horizon_weight(
                 self._swing_age_at_prepare[env_ids, foot_ids]
@@ -639,6 +807,7 @@ class FootholdImaginationManager:
             self._latest_yaw_b,
             self._latest_yaw_w,
             self._latest_sigma,
+            self._latest_yaw_sigma,
             self._latest_base_frame,
         ):
             if latest is not None:
@@ -665,9 +834,10 @@ class FootholdImaginationManager:
         rollout_stats = torch.cat(
             (
                 rollout_stats,
-                self._contact_support_stats,
                 self._guidance_reward_stats,
                 self._swing_guidance_stats,
+                self._contact_support_stats.reshape(-1),
+                self._touchdown_filter_stats.reshape(-1),
                 self._horizon_diag_stats.reshape(-1),
                 self._family_diag_stats.reshape(-1),
             )
@@ -677,8 +847,6 @@ class FootholdImaginationManager:
         (
             terrain_level_sum,
             environment_count,
-            contact_support_sum,
-            contact_count,
             guidance_reward_sum,
             guidance_reward_count,
             swing_deficiency_sum,
@@ -686,10 +854,20 @@ class FootholdImaginationManager:
             eval_sigma_sum,
             eval_sigma_count,
             horizon_weight_sum,
-        ) = rollout_stats[:11].tolist()
-        offset = 11
+        ) = rollout_stats[:9].tolist()
+        offset = 9
+        contact_n = self._contact_support_stats.numel()
+        filter_n = self._touchdown_filter_stats.numel()
         horizon_n = self._horizon_diag_stats.numel()
         family_n = self._family_diag_stats.numel()
+        contact_stats = rollout_stats[offset : offset + contact_n].view_as(
+            self._contact_support_stats
+        )
+        offset += contact_n
+        filter_stats = rollout_stats[offset : offset + filter_n].view_as(
+            self._touchdown_filter_stats
+        )
+        offset += filter_n
         horizon_stats = rollout_stats[offset : offset + horizon_n].view_as(self._horizon_diag_stats)
         family_stats = rollout_stats[offset + horizon_n : offset + horizon_n + family_n].view_as(
             self._family_diag_stats
@@ -702,8 +880,7 @@ class FootholdImaginationManager:
             self._terrain_ready_mask.fill_(True)
         metrics["Foothold/Guidance/inv_stairs_level"] = inv_stairs_mean
 
-        if contact_count > 0.0:
-            metrics["Foothold/Contact/support_ratio"] = contact_support_sum / contact_count
+        metrics.update(self._contact_logs_from_stats(contact_stats, filter_stats))
         # Eligible-terrain mean of the reward tensor (stance zeros included).
         # Swing-only signal is ``swing_deficiency``; Episode_Reward is further diluted.
         metrics["Foothold/Guidance/reward"] = (
@@ -722,6 +899,7 @@ class FootholdImaginationManager:
         metrics.update(self._diag_logs_from_stats("Foothold/Terrain", _FAMILY_BIN_NAMES, family_stats))
 
         self._contact_support_stats.zero_()
+        self._touchdown_filter_stats.zero_()
         self._guidance_reward_stats.zero_()
         self._swing_guidance_stats.zero_()
         self._horizon_diag_stats.zero_()

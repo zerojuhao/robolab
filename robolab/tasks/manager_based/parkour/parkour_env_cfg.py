@@ -553,13 +553,16 @@ class ParkourRewardsCfg(MultiRewardCfg):
     )
     feet_flat_ori = RewTerm(
         func=mdp.feet_orientation_contact,
-        weight=-0.5,
+        weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=".*_ankle_roll_link"
             ),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_roll_link"),
-            "enabled_terrain_family_ids": mdp.STAIRS_FAMILY_IDS,
+            "enabled_terrain_family_ids": mdp.FOOTHOLD_GUIDANCE_FAMILY_IDS,
+            "deadzone": math.radians(5.0),
+            "quadratic_scale": math.radians(15.0),
+            "max_penalty": 4.0,
         },
     )
     feet_at_plane = RewTerm(
@@ -577,6 +580,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
             "height_tolerance": 0.03,
             "support_transition_width": 0.005,
             "enable_terrain_foot_weights": True,
+            "max_plane_terrain_family_ids": mdp.FOOTHOLD_GUIDANCE_FAMILY_IDS,
             "stairs_weight_min": 0.1,
             "stairs_weight_max": 1.0,
         },
@@ -876,18 +880,18 @@ class EventCfg:
         },
     )
 
-    push_robot = EventTerm(
-        func=mdp.push_by_setting_velocity_per_terrain,
-        mode="interval",
-        interval_range_s=(7.0, 10.0),
-        params={
-            "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
-            "terrain_velocity_ranges": {
-                "stairs": {"x": (0.0, 0.5), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
-                "platforms": {"x": (0.0, 0.5), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
-            },
-        },
-    )
+    # push_robot = EventTerm(
+    #     func=mdp.push_by_setting_velocity_per_terrain,
+    #     mode="interval",
+    #     interval_range_s=(7.0, 10.0),
+    #     params={
+    #         "velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-1.0, 1.0)},
+    #         "terrain_velocity_ranges": {
+    #             "stairs": {"x": (0.0, 0.5), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
+    #             "platforms": {"x": (0.0, 0.5), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
+    #         },
+    #     },
+    # )
 
 @configclass
 class CurriculumCfg:

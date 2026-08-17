@@ -32,7 +32,8 @@ def terrain_foot_point_weights(
 ) -> torch.Tensor:
     """Terrain-dependent sole weights along foot-local x (heel → toe).
 
-    Up-stairs: toe-heavy; down-stairs: heel-heavy; other: mid-foot-heavy.
+    Up-stairs: toe-heavy; down-stairs: heel-heavy; discrete: mid-foot-heavy.
+    Other terrain families use uniform weights.
     ``local_x`` is ``(P,)``; ``family_ids`` is ``(N,)``; returns ``(N, P)``.
     """
     x_min = local_x.min()
@@ -45,13 +46,14 @@ def terrain_foot_point_weights(
     w_mid_heavy = stairs_weight_min + weight_span * (
         1.0 - 2.0 * torch.abs(x_frac - 0.5)
     )
-    w_toe_heavy = w_toe_heavy.square()
-    w_heel_heavy = w_heel_heavy.square()
-    w_mid_heavy = w_mid_heavy.square()
-
-    env_w = w_mid_heavy.unsqueeze(0).expand(family_ids.shape[0], -1).clone()
+    env_w = torch.ones(
+        family_ids.shape[0], local_x.shape[0], device=local_x.device, dtype=local_x.dtype
+    )
+    mask_discrete = family_ids == DISCRETE_FAMILY_ID
     mask_up = family_ids == STAIRS_UP_FAMILY_ID
     mask_down = family_ids == STAIRS_DOWN_FAMILY_ID
+    if mask_discrete.any():
+        env_w[mask_discrete] = w_mid_heavy
     if mask_up.any():
         env_w[mask_up] = w_toe_heavy
     if mask_down.any():
@@ -89,8 +91,12 @@ def soft_absolute_clearance_unsupported(
         valid, 1.0 - support, torch.full_like(support, miss_unsupported)
     )
     if unsupported_only:
+        boundary_eps = 8.0 * torch.finfo(clearance.dtype).eps
+        unsupported_mask = (~valid) | (
+            clearance > float(height_tolerance) + boundary_eps
+        )
         unsupported = torch.where(
-            unsupported > 0.5, unsupported, torch.zeros_like(unsupported)
+            unsupported_mask, unsupported, torch.zeros_like(unsupported)
         )
     if point_weights is None:
         point_weights = torch.ones(
@@ -100,6 +106,69 @@ def soft_absolute_clearance_unsupported(
         point_weights = point_weights.unsqueeze(-2)
     denom = point_weights.sum(dim=-1).clamp_min(torch.finfo(unsupported.dtype).eps)
     return (unsupported * point_weights).sum(dim=-1) / denom
+
+
+def conservative_support_deficiency(
+    foot_z: torch.Tensor,
+    terrain_z: torch.Tensor,
+    height_offset: float = 0.03,
+    height_tolerance: float = 0.03,
+    transition_width: float = 0.005,
+    point_weights: torch.Tensor | None = None,
+    miss_unsupported: float = 1.0,
+    unsupported_only: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return conservative, area, and terrain-weighted support deficiencies.
+
+    Terrain weights may increase the penalty for support in an unfavorable sole
+    region, but may never hide unsupported sole area.
+    """
+    kwargs = {
+        "height_offset": height_offset,
+        "height_tolerance": height_tolerance,
+        "transition_width": transition_width,
+        "miss_unsupported": miss_unsupported,
+        "unsupported_only": unsupported_only,
+    }
+    area = soft_absolute_clearance_unsupported(
+        foot_z, terrain_z, point_weights=None, **kwargs
+    )
+    if point_weights is None:
+        return area, area, area
+    terrain = soft_absolute_clearance_unsupported(
+        foot_z, terrain_z, point_weights=point_weights, **kwargs
+    )
+    return torch.maximum(area, terrain), area, terrain
+
+
+def highest_plane_support_deficiency(
+    terrain_z: torch.Tensor,
+    height_tolerance: float = 0.03,
+    transition_width: float = 0.005,
+    point_weights: torch.Tensor | None = None,
+    miss_unsupported: float = 1.0,
+    unsupported_only: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Measure sole support relative to the highest finite terrain sample."""
+    valid = torch.isfinite(terrain_z)
+    has_plane = valid.any(dim=-1)
+    support_plane = torch.where(
+        valid, terrain_z, torch.full_like(terrain_z, -torch.inf)
+    ).max(dim=-1, keepdim=True).values
+    support_plane = torch.where(has_plane.unsqueeze(-1), support_plane, 0.0)
+    deficiencies = conservative_support_deficiency(
+        support_plane,
+        terrain_z,
+        height_offset=0.0,
+        height_tolerance=height_tolerance,
+        transition_width=transition_width,
+        point_weights=point_weights,
+        miss_unsupported=miss_unsupported,
+        unsupported_only=unsupported_only,
+    )
+    return tuple(
+        torch.where(has_plane, value, torch.ones_like(value)) for value in deficiencies
+    )
 
 
 def _family_id_from_name(name: str) -> int:
