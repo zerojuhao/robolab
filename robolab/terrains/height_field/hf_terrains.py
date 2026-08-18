@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from . import hf_terrains_cfg
 
 from . import hf_terrains_cfg
+from .grid_utils import centered_step_levels
 from .utils import generate_wall
 
 
@@ -88,34 +89,11 @@ def perlin_pyramid_sloped_terrain(difficulty: float, cfg: hf_terrains_cfg.Perlin
     # -- horizontal scale
     width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
     length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
-    # -- height
-    # we want the height to be 1/2 of the width since the terrain is a pyramid
-    height_max = int(slope * cfg.size[0] / 2 / cfg.vertical_scale)
-    # -- center of the terrain
-    center_x = int(width_pixels / 2)
-    center_y = int(length_pixels / 2)
-
-    # create a meshgrid of the terrain
-    x = np.arange(0, width_pixels)
-    y = np.arange(0, length_pixels)
-    xx, yy = np.meshgrid(x, y, sparse=True)
-    # offset the meshgrid to the center of the terrain
-    xx = (center_x - np.abs(center_x - xx)) / center_x
-    yy = (center_y - np.abs(center_y - yy)) / center_y
-    # reshape the meshgrid to be 2D
-    xx = xx.reshape(width_pixels, 1)
-    yy = yy.reshape(1, length_pixels)
-    # create a sloped surface
-    hf_raw = np.zeros((width_pixels, length_pixels))
-    hf_raw = height_max * xx * yy
-
-    # create a flat platform at the center of the terrain
-    platform_width = int(cfg.platform_width / cfg.horizontal_scale / 2)
-    # get the height of the platform at the corner of the platform
-    x_pf = width_pixels // 2 - platform_width
-    y_pf = length_pixels // 2 - platform_width
-    z_pf = hf_raw[x_pf, y_pf]
-    hf_raw = np.clip(hf_raw, min(0, z_pf), max(0, z_pf))
+    platform_pixels = round(cfg.platform_width / cfg.horizontal_scale)
+    x_levels = centered_step_levels(width_pixels, platform_pixels, 1)
+    y_levels = centered_step_levels(length_pixels, platform_pixels, 1)
+    height_per_pixel = slope * cfg.horizontal_scale / cfg.vertical_scale
+    hf_raw = np.minimum(x_levels[:, None], y_levels[None, :]) * height_per_pixel
     if cfg.perlin_cfg is not None:
         perlin_cfg = cfg.perlin_cfg
         perlin_cfg.size = cfg.size
@@ -172,24 +150,9 @@ def perlin_pyramid_stairs_terrain(difficulty: float, cfg: hf_terrains_cfg.Perlin
     # -- platform
     platform_width = round(cfg.platform_width / cfg.horizontal_scale)
 
-    # create a terrain with a flat platform at the center
-    hf_raw = np.zeros((width_pixels, length_pixels))
-    # add the steps
-    current_step_height = 0
-    start_x, start_y = 0, 0
-    stop_x, stop_y = width_pixels, length_pixels
-    while (stop_x - start_x) > platform_width and (stop_y - start_y) > platform_width:
-        # increment position
-        # -- x
-        start_x += step_width
-        stop_x -= step_width
-        # -- y
-        start_y += step_width
-        stop_y -= step_width
-        # increment height
-        current_step_height += step_height
-        # add the step
-        hf_raw[start_x:stop_x, start_y:stop_y] = current_step_height
+    x_levels = centered_step_levels(width_pixels, platform_width, step_width)
+    y_levels = centered_step_levels(length_pixels, platform_width, step_width)
+    hf_raw = np.minimum(x_levels[:, None], y_levels[None, :]) * step_height
 
     if cfg.perlin_cfg is not None:
         perlin_cfg = cfg.perlin_cfg
@@ -231,17 +194,17 @@ def perlin_platforms_terrain(
     width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
     length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
     band_pixels = round(cfg.band_width / cfg.horizontal_scale)
-    center_pixels = round(cfg.center_width / cfg.horizontal_scale)
+    center_pixels = round(cfg.platform_width / cfg.horizontal_scale)
     border_pixels = round(cfg.border_width / cfg.horizontal_scale)
     if band_pixels < 1:
         raise ValueError("band_width must be at least one horizontal grid cell.")
     if center_pixels < 1:
-        raise ValueError("center_width must be at least one horizontal grid cell.")
+        raise ValueError("platform_width must be at least one horizontal grid cell.")
     if border_pixels < 0:
         raise ValueError("border_width must be non-negative.")
     if center_pixels + 2 * border_pixels >= min(width_pixels, length_pixels):
         raise ValueError(
-            "center_width and border_width leave no room for concentric rings."
+            "platform_width and border_width leave no room for concentric rings."
         )
 
     height = min_height + difficulty * (max_height - min_height)
@@ -325,14 +288,10 @@ def perlin_trapezoid_stairs_terrain(
     step_height_px = round(step_height / vs)
     platform_width_px = round(cfg.platform_width / hs)
 
-    hf_raw = np.zeros((sub_width_px, sub_length_px))
-    current_step_height = 0
-    start_x, stop_x = 0, sub_width_px
-    while (stop_x - start_x) > platform_width_px:
-        start_x += step_width_px
-        stop_x -= step_width_px
-        current_step_height += step_height_px
-        hf_raw[start_x:stop_x, :] = current_step_height
+    x_levels = centered_step_levels(
+        sub_width_px, platform_width_px, step_width_px
+    )
+    hf_raw = np.repeat(x_levels[:, None], sub_length_px, axis=1) * step_height_px
 
     if cfg.inverted:
         rim_height = hf_raw[step_width_px, 0]

@@ -34,9 +34,9 @@ RP1_SUPPORT_TRANSITION_WIDTH = 0.005
 # Shared by feet_volume_points (penetration) and foot height-scan (critic / support).
 # Tune the shoe box here; scan center and size follow x/y bounds.
 FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
-    x_min=-0.12,
+    x_min=-0.09,
     x_max=0.14,
-    x_num=27,
+    x_num=24,
     y_min=-0.04,
     y_max=0.04,
     y_num=9,
@@ -45,7 +45,8 @@ FEET_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
     z_num=4,
 )
 
-FOOT_HEIGHT_SCAN_RESOLUTION = 0.02
+FOOT_HEIGHT_SCAN_RESOLUTION = 0.01
+FOOT_HEIGHT_SCAN_RAY_START_HEIGHT = 20.0
 FOOT_HEIGHT_SCAN_CENTER = (
     0.5 * (FEET_VOLUME_POINTS_GRID.x_min + FEET_VOLUME_POINTS_GRID.x_max),
     0.5 * (FEET_VOLUME_POINTS_GRID.y_min + FEET_VOLUME_POINTS_GRID.y_max),
@@ -94,8 +95,10 @@ class RP1ParkourEnvCfg(ParkourEnvCfg):
             self.scene.left_height_scanner,
             self.scene.right_height_scanner,
         ):
-            ray_start_height = scanner_cfg.offset.pos[2]
-            scanner_cfg.offset.pos = (*FOOT_HEIGHT_SCAN_CENTER, ray_start_height)
+            scanner_cfg.offset.pos = (
+                *FOOT_HEIGHT_SCAN_CENTER,
+                FOOT_HEIGHT_SCAN_RAY_START_HEIGHT,
+            )
             scanner_cfg.pattern_cfg.size = FOOT_HEIGHT_SCAN_SIZE
             scanner_cfg.pattern_cfg.resolution = FOOT_HEIGHT_SCAN_RESOLUTION
         self.scene.camera.prim_path = "{ENV_REGEX_NS}/Robot/waist_yaw_link"

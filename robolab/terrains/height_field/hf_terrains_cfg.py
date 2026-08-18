@@ -72,7 +72,7 @@ class PerlinPlatformsTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
     band_width: float = 0.5
     """Width of every raised or flat square ring in meters."""
 
-    center_width: float = 2.0
+    platform_width: float = 2.0
     """Width of the square flat region at the terrain center in meters."""
 
     border_width: float = 0.5

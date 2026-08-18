@@ -817,7 +817,11 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.0, 0.0), "y": (-0.0, 0.0), "yaw": (-0.0, 0.0)},
+            "pose_range": {
+                "x": (-0.78, 0.78),
+                "y": (-0.78, 0.78),
+                "yaw": (-3.14, 3.14),
+            },
             "velocity_range": {
                 "x": (-0.2, 0.2),
                 "y": (-0.2, 0.2),
